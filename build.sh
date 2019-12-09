@@ -2,7 +2,7 @@
 set -e
 
 PV_DOCKER_REGISTRY="507760724064.dkr.ecr.us-west-2.amazonaws.com"
-PV_EXP_NAME="exp-nginx-1.4.0"
+PV_EXP_NAME="exp-nginx-1.4.0-brop"
 
 main() {
         GIT_COMMIT=$(git rev-parse --verify HEAD)
