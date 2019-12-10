@@ -45,7 +45,7 @@ def grab_socket()
 		$localip = s.local_address.ip_address
 		s.close()
 
-		print("\nlocalip #{$localip}\n")
+		print("\nlocalip #{$localip}:#{$port}\n")
 	end
 
 	for i in 0..100
@@ -62,6 +62,8 @@ def grab_socket()
 			break
 		rescue Errno::EADDRNOTAVAIL
 			s.close()
+		rescue Errno::EADDRINUSE
+			s.close()
 		end
 	end
 
@@ -71,47 +73,51 @@ def grab_socket()
 end
 
 def get_child()
-        s = nil
-        found = false
+	s = nil
+	found = false
 
-        while !found
-                s = nil
-	
+	while !found
+		s = nil
+
 		begin 
 			Timeout.timeout(1) do
 				s = grab_socket()
 			end
-		rescue
+		rescue Timeout::Error
 			print("Connect timeout\n")
+			next
+		rescue SystemCallError => e
+			print("Connect exception, err=#{e}\n")
+			exit(666)
 			next
 		end
 
-                req = "GET #{$url} HTTP/1.1\r\n"
-                req << "Host: bla.com\r\n"
-                req << "Connection: Keep-Alive\r\n"
-                req << "\r\n"
-                
-                s.puts(req)
-                begin   
-                        Timeout.timeout(5) do
-                                r = s.gets
-                                if r.index("200 OK") != nil or r.index("404") != nil or r.index("302") != nil
-                                        found = true
-                                        break
-                                end                                                                           
-                        end                                                                                   
-                rescue
-                end
+		req = "GET #{$url} HTTP/1.1\r\n"
+		req << "Host: bla.com\r\n"
+		req << "Connection: Keep-Alive\r\n"
+		req << "\r\n"
+		
+		s.puts(req)
+		begin   
+			Timeout.timeout(5) do
+				r = s.gets
+				if r.index("200 OK") != nil or r.index("404") != nil or r.index("302") != nil
+					found = true
+					break
+				end                                                                           
+			end                                                                                   
+		rescue
+		end
 
-                break if found
+		break if found
 
-                print("Bad child\n")
-                s.close
-        end
+		print("Bad child\n")
+		s.close
+	end
 
-        read_response(s)
+	read_response(s)
 
-        return s
+	return s
 end
 
 def read_response(s)
