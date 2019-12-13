@@ -7,6 +7,11 @@
 
 # Arch   - depth 16 pad 2 ; 1 worker 18 pad 2  olen 4192
 # Ubuntu - depth 16 pad 3 ; 1 worker 18 pad 3  olen 4120
+#
+# dmccrady Notes:
+# 
+#   - Relies on the presence of a BROP gadget
+#		- One way to get rid of that is to compile with "-p" which adds an extra POP %rbp after the gadget.
 
 require 'socket'
 require 'timeout'
@@ -343,6 +348,8 @@ def check_overflow_len()
 #	print("WARNING unexpected overflow len\n") if len != expected
 
 	$overflow_len = len
+
+	abort("Didn't find canary") if not $canary
 end
 
 def check_stack_depth()
