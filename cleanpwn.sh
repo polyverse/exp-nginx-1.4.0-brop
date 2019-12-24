@@ -1,6 +1,4 @@
 #!/bin/bash
-if [ -f "./state.bin" ]; then
-    rm ./state.bin
-fi
+rm -f ./state.bin
 
 ./brop.rb vuln-nginx-1.4.0-64
