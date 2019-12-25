@@ -79,6 +79,8 @@ class State
 
 			rdi: @rdi,
 			rsi: @rsi,
+			arg1_extra_pops: @arg1_extra_pops,
+			arg2_extra_pops: @arg2_extra_pops,
 			canary: @canary,
 			canary_offset: @canary_offset,
 			ret: @ret,
