@@ -15,10 +15,12 @@ main() {
         aws --region us-west-2 ecr create-repository --repository-name $PV_EXP_NAME-64 || true
 
         docker push "$PV_DOCKER_REGISTRY/$PV_EXP_NAME-32:latest"
+        [ $? -ne 0 ] && return 1
         docker push "$PV_DOCKER_REGISTRY/$PV_EXP_NAME-32:$GIT_COMMIT"
         [ $? -ne 0 ] && return 1
 
         docker push "$PV_DOCKER_REGISTRY/$PV_EXP_NAME-64:latest"
+        [ $? -ne 0 ] && return 1
         docker push "$PV_DOCKER_REGISTRY/$PV_EXP_NAME-64:$GIT_COMMIT"
         [ $? -ne 0 ] && return 1
 
