@@ -11,17 +11,11 @@ main() {
         GIT_COMMIT=$(git rev-parse --verify HEAD)
 
         # create the repo; no harm if it already exists other than the call returns 255⏎
-        aws --region us-west-2 ecr create-repository --repository-name $PV_EXP_NAME-32 || true
-        aws --region us-west-2 ecr create-repository --repository-name $PV_EXP_NAME-64 || true
+        aws --region us-west-2 ecr create-repository --repository-name $PV_EXP_NAME || true
 
-        docker push "$PV_DOCKER_REGISTRY/$PV_EXP_NAME-32:latest"
+        docker push "$PV_DOCKER_REGISTRY/$PV_EXP_NAME:latest"
         [ $? -ne 0 ] && return 1
-        docker push "$PV_DOCKER_REGISTRY/$PV_EXP_NAME-32:$GIT_COMMIT"
-        [ $? -ne 0 ] && return 1
-
-        docker push "$PV_DOCKER_REGISTRY/$PV_EXP_NAME-64:latest"
-        [ $? -ne 0 ] && return 1
-        docker push "$PV_DOCKER_REGISTRY/$PV_EXP_NAME-64:$GIT_COMMIT"
+        docker push "$PV_DOCKER_REGISTRY/$PV_EXP_NAME:$GIT_COMMIT"
         [ $? -ne 0 ] && return 1
 
         return 0
