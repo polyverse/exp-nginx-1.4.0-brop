@@ -10,12 +10,12 @@ USAGE
         bash publish.sh
 
     First run a container to attack (vulnerable OR safe):
-        docker run -it --rm --name vuln-target 507760724064.dkr.ecr.us-west-2.amazonaws.com/vuln-nginx-1.4.0
+        docker run -it --rm --name target 507760724064.dkr.ecr.us-west-2.amazonaws.com/base-nginx-1.4.0
     -OR-
-        docker run -it --rm --name vuln-target 507760724064.dkr.ecr.us-west-2.amazonaws.com/safe-nginx-1.4.0
+        docker run -it --rm --name target 507760724064.dkr.ecr.us-west-2.amazonaws.com/safe-nginx-1.4.0
 
     Then run this exploit to attack it:
-        docker run --rm --link vuln-target -it 507760724064.dkr.ecr.us-west-2.amazonaws.com/exp-nginx-1.4.0-brop
+        docker run --rm --link target -it 507760724064.dkr.ecr.us-west-2.amazonaws.com/exp-nginx-1.4.0-brop
 
 NOTES
 
