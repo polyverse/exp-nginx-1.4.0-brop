@@ -12,20 +12,12 @@ USAGE
     First run a container to attack (vulnerable OR safe):
         docker run -it --rm --name target 507760724064.dkr.ecr.us-west-2.amazonaws.com/base-nginx-1.4.0
     -OR-
-        docker run -it --rm --name target 507760724064.dkr.ecr.us-west-2.amazonaws.com/safe-nginx-1.4.0-dev
-	-OR-
-        docker run -it --rm --name target 507760724064.dkr.ecr.us-west-2.amazonaws.com/safe-nginx-1.4.0-rel
+        docker run -it --privileged --rm --name target 507760724064.dkr.ecr.us-west-2.amazonaws.com/safe-nginx-1.4.0-dev
+    -OR-
+        docker run -it --privileged --rm --name target 507760724064.dkr.ecr.us-west-2.amazonaws.com/safe-nginx-1.4.0-rel
 
     Then run this exploit to attack it:
         docker run --rm --link target -it 507760724064.dkr.ecr.us-west-2.amazonaws.com/exp-nginx-1.4.0-brop
-
-NOTES
-
-    SAVING STATE:  The brop.rb program attempts to save state as it goes through the phases of its attack such that 
-    if it has to restart, it can do so using information discovered from the previous successful portion of the 
-    attack.  The state is in a file called 'state.json'.  This can also be useful for debugging if you know what
-    you're doing, but in general, it is more reliable to do a full attack.  If the attack fails for mysterious
-    reasons, your first step should be to delete 'state.json' and rerun the attack.
 
 ISSUES:
     - Occasionally declares the victim 'Not vulnerable' or 'Overflow of 5000 didn't crash, assuming not
@@ -33,5 +25,4 @@ ISSUES:
 
     - Canary reads all zeroes.  Cause unknown.  Remove the 'state.json' file and rerun the attack usually
       resolves this.  
-
 ```
