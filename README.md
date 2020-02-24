@@ -19,6 +19,19 @@ USAGE
     Then run this exploit to attack it:
         docker run --rm --link target -it 507760724064.dkr.ecr.us-west-2.amazonaws.com/exp-nginx-1.4.0-brop
 
+RUNNING BROP.RB
+
+    The brop.rb program can be invoked manually using:
+
+        ./brop.rb [-v] [p] [target-name-or-ip]
+
+    The -v option enables verbose mode which produces more informational output.  Leaving this option out
+    reduces the output to just the essential information.
+
+    The -p option will interactively prompt the user to hit <enter> before it proceeds to the next BROP phase
+
+    If the targete-name-or-ip is missing, localhost is assumed.
+
 NOTES
 
     SAVING STATE:  The brop.rb program attempts to save state as it goes through the phases of its attack such that 
