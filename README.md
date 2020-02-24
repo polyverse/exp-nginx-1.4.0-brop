@@ -12,9 +12,9 @@ USAGE
     First run a container to attack (vulnerable OR safe):
         docker run -it --rm --name target 507760724064.dkr.ecr.us-west-2.amazonaws.com/base-nginx-1.4.0
     -OR-
-        docker run -it --rm --name target 507760724064.dkr.ecr.us-west-2.amazonaws.com/safe-nginx-1.4.0-dev
-	-OR-
-        docker run -it --rm --name target 507760724064.dkr.ecr.us-west-2.amazonaws.com/safe-nginx-1.4.0-rel
+        docker run -it --privileged --rm --name target 507760724064.dkr.ecr.us-west-2.amazonaws.com/safe-nginx-1.4.0-dev
+    -OR-
+        docker run -it --privileged --rm --name target 507760724064.dkr.ecr.us-west-2.amazonaws.com/safe-nginx-1.4.0-rel
 
     Then run this exploit to attack it:
         docker run --rm --link target -it 507760724064.dkr.ecr.us-west-2.amazonaws.com/exp-nginx-1.4.0-brop
@@ -46,5 +46,4 @@ ISSUES:
 
     - Canary reads all zeroes.  Cause unknown.  Remove the 'state.json' file and rerun the attack usually
       resolves this.  
-
 ```
