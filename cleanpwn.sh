@@ -1,4 +1,4 @@
 #!/bin/bash
 rm -f ./state.*
 
-./brop.rb base-nginx-1.4.0
+./brop.rb safe-nginx-1.4.0
