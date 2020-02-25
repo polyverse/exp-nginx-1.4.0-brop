@@ -2328,14 +2328,15 @@ def pwn()
 
 #	find_pops() if not $state.rax or not $state.syscall
 #	find_pops() if not $state.rdi
-	intro("Finding gadgets, including strcmp")
+	intro("Finding BROP gadget")
 	find_gadget() if not $state.rdi
 	print_progress() if $verbose
 
+	intro("Finding strcmp (to control rdx)")
 	find_rdx() if not $state.strcmp
 	print_progress() if $verbose
 
-	intro("Finding write() with file descriptor, and dup2")
+	intro("Finding write() with file descriptor")
 #	find_write() if not $state.write
 #	find_write2() if not $state.write
 	find_write3() if not $state.write
@@ -2345,6 +2346,7 @@ def pwn()
 
 #	find_fd()
 
+	intro("Finding dup2()")
 	find_dup2() if not $state.dup2
 	print_progress() if $verbose
 
