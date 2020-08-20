@@ -20,13 +20,23 @@ USAGE
         docker run -it --privileged --rm --name target 507760724064.dkr.ecr.us-west-2.amazonaws.com/safe-nginx-1.4.0-rel
 
     Then run this exploit to attack it:
-        docker run --rm --link target -it polyverse/exp-nginx-1.4.0-brop
+        docker run --rm --link target -it polyverse/exp-nginx-1.4.0-brop [-v] [p] [target-name-or-ip]
+    For example:
+    ```
+    docker run --rm --link target -it polyverse/exp-nginx-1.4.0-brop target
+    ```
+    -OR-
+    ```
+    # interactive prompts
+    docker run --rm --link target -it polyverse/exp-nginx-1.4.0-brop -p target
+    ```
+
 
 RUNNING BROP.RB
 
     The brop.rb program can be invoked manually using:
 
-        ./brop.rb [-v] [p] [target-name-or-ip]
+        ./brop.rb [-v] [-p] [target-name-or-ip]
 
     The -v option enables verbose mode which produces more informational output.  Leaving this option out
     reduces the output to just the essential information.
