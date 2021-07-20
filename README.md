@@ -1,5 +1,8 @@
 # Container for brop exploit as described here: http://www.scs.stanford.edu/brop/
 
+## Docker Image
+https://hub.docker.com/repository/docker/polyverse/exp-nginx-1.4.0-brop
+
 ## Usage
 ```
 USAGE
@@ -10,20 +13,30 @@ USAGE
         bash publish.sh
 
     First run a container to attack (vulnerable OR safe):
-        docker run -it --rm --name target 507760724064.dkr.ecr.us-west-2.amazonaws.com/base-nginx-1.4.0
+        docker run -it --rm --name target polyverse/vulnerable-nginx-1.4.0:base
     -OR-
         docker run -it --privileged --rm --name target 507760724064.dkr.ecr.us-west-2.amazonaws.com/safe-nginx-1.4.0-dev
     -OR-
         docker run -it --privileged --rm --name target 507760724064.dkr.ecr.us-west-2.amazonaws.com/safe-nginx-1.4.0-rel
 
     Then run this exploit to attack it:
-        docker run --rm --link target -it 507760724064.dkr.ecr.us-west-2.amazonaws.com/exp-nginx-1.4.0-brop
+        docker run --rm --link target -it polyverse/exp-nginx-1.4.0-brop [-v] [p] [target-name-or-ip]
+    For example:
+    ```
+    docker run --rm --link target -it polyverse/exp-nginx-1.4.0-brop target
+    ```
+    -OR-
+    ```
+    # interactive prompts
+    docker run --rm --link target -it polyverse/exp-nginx-1.4.0-brop -p target
+    ```
+
 
 RUNNING BROP.RB
 
     The brop.rb program can be invoked manually using:
 
-        ./brop.rb [-v] [p] [target-name-or-ip]
+        ./brop.rb [-v] [-p] [target-name-or-ip]
 
     The -v option enables verbose mode which produces more informational output.  Leaving this option out
     reduces the output to just the essential information.
@@ -34,8 +47,8 @@ RUNNING BROP.RB
 
 NOTES
 
-    SAVING STATE:  The brop.rb program attempts to save state as it goes through the phases of its attack such that 
-    if it has to restart, it can do so using information discovered from the previous successful portion of the 
+    SAVING STATE:  The brop.rb program attempts to save state as it goes through the phases of its attack such that
+    if it has to restart, it can do so using information discovered from the previous successful portion of the
     attack.  The state is in a file called 'state.json'.  This can also be useful for debugging if you know what
     you're doing, but in general, it is more reliable to do a full attack.  If the attack fails for mysterious
     reasons, your first step should be to delete 'state.json' and rerun the attack.
@@ -45,5 +58,5 @@ ISSUES:
       vulnerable'.  Restarting the victim nginx usually resolves this.
 
     - Canary reads all zeroes.  Cause unknown.  Remove the 'state.json' file and rerun the attack usually
-      resolves this.  
+      resolves this.
 ```

@@ -9,4 +9,5 @@ ADD     ./brop.rb /exploit/
 #ADD	vendor/stanford/nginx-1.4.0-exp/brop.rb /exploit/
 
 WORKDIR	/exploit
-CMD	["ruby", "./brop.rb", "target"]
+ENTRYPOINT	["ruby", "./brop.rb"]
+CMD [""target""]
